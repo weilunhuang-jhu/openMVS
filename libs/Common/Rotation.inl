@@ -692,21 +692,21 @@ void TRMatrixBase<TYPE>::Set(const Vec& wa, TYPE phi)
   }
 
   const TYPE wnorm(norm(wa));
-  if (wnorm < TYPE(1e-7)) {
+  if (wnorm < std::numeric_limits<TYPE>::epsilon()) {
 	CPC_ERROR("Vector "<<wa<<" is close to zero (norm = "<<wnorm<<"), solution is instable!");
   }
   const Vec w(wa*(TYPE(1)/wnorm));
 
   Mat Omega;
-  Omega(0,0) = 0.0;
+  Omega(0,0) = TYPE(0);
   Omega(0,1) = -w[2];
   Omega(0,2) = w[1];
   Omega(1,0) = w[2];
-  Omega(1,1) = 0.0;
+  Omega(1,1) = TYPE(0);
   Omega(1,2) = -w[0];
   Omega(2,0) = -w[1] ;
   Omega(2,1) = w[0];
-  Omega(2,2) = 0.0;
+  Omega(2,2) = TYPE(0);
 
   const Mat Sin_O(Omega *  sin(phi));
   const Mat Cos_O_O((Omega * Omega) * (TYPE(1)-cos(phi)));

@@ -373,7 +373,7 @@ bool DepthMapsData::InitViews(DepthData& depthData, IIndex idxNeighbor, IIndex n
 		// print selected views
 		if (g_nVerbosityLevel > 2) {
 			String msg;
-			for (IDX i=1; i<depthData.images.GetSize(); ++i)
+			for (IIndex i=1; i<depthData.images.GetSize(); ++i)
 				msg += String::FormatString(" %3u(%.2fscl)", depthData.images[i].pImageData-scene.images.Begin(), depthData.images[i].scale);
 			VERBOSE("Reference image %3u paired with %u views:%s (%u shared points)", idxImage, depthData.images.GetSize()-1, msg.c_str(), depthData.points.GetSize());
 		} else
@@ -574,7 +574,7 @@ void* STCALL DepthMapsData::ScoreDepthMapTmp(void* arg)
 			// replace invalid normal with random values
 			normal = DepthEstimator::RandomNormal(viewDir);
 		}
-		estimator.confMap0(x) = DepthEstimator::EncodeScoreScale(estimator.ScorePixel(depth, normal));
+		estimator.confMap0(x) = DepthEstimator::EncodeScoreScale(estimator.ScorePixel(depth, normal, estimator.viewsIDMap0(x)));
 	}
 	return NULL;
 }
@@ -612,13 +612,7 @@ void* STCALL DepthMapsData::EndDepthMapTmp(void* arg)
 			#if 1
 			FOREACH(i, estimator.images)
 				estimator.scores[i] = ComputeAngle<REAL,float>(estimator.image0.camera.TransformPointI2W(Point3(x,depth)).ptr(), estimator.image0.camera.C.ptr(), estimator.images[i].view.camera.C.ptr());
-			#if DENSE_AGGNCC == DENSE_AGGNCC_NTH
-			const float fCosAngle(estimator.scores.size() > 1 ? estimator.scores.GetNth(estimator.idxScore) : estimator.scores.front());
-			#elif DENSE_AGGNCC == DENSE_AGGNCC_MEAN
-			const float fCosAngle(estimator.scores.mean());
-			#else
-			const float fCosAngle(estimator.scores.minCoeff());
-			#endif
+			const float fCosAngle(estimator.scores.size() > 1 ? estimator.scores.GetNth(1) : estimator.scores.front());
 			const float wAngle(MINF(POW(ACOS(fCosAngle)/fOptimAngle,1.5f),1.f));
 			#else
 			const float wAngle(1.f);
@@ -705,8 +699,10 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 	if (prevDepthMapSize != size) {
 		prevDepthMapSize = size;
 		BitMatrix mask;
-		DepthEstimator::MapMatrix2ZigzagIdx(size, coords, mask, MAXF(64,(int)nMaxThreads*8));
+		DepthEstimator::MapMatrix2CheckerboardIdx(size, coords, mask);
 	}
+	ViewsIDMap viewsIDMap0(size);
+	viewsIDMap0.memset(255);
 
 	// init threads
 	ASSERT(nMaxThreads > 0);
@@ -723,7 +719,7 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 		idxPixel = -1;
 		ASSERT(estimators.IsEmpty());
 		while (estimators.GetSize() < nMaxThreads)
-			estimators.AddConstruct(depthData, idxPixel, imageSum0, coords, DepthEstimator::RB2LT);
+			estimators.AddConstruct(0, depthData, idxPixel, imageSum0, viewsIDMap0, coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
 		FOREACH(i, threads)
 			threads[i].start(ScoreDepthMapTmp, &estimators[i]);
@@ -745,11 +741,10 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 	// run propagation and random refinement cycles on the reference data
 	for (unsigned iter=0; iter<OPTDENSE::nEstimationIters; ++iter) {
 		// create working threads
-		const DepthEstimator::ENDIRECTION dir((DepthEstimator::ENDIRECTION)(iter%DepthEstimator::DIRS));
 		idxPixel = -1;
 		ASSERT(estimators.IsEmpty());
 		while (estimators.GetSize() < nMaxThreads)
-			estimators.AddConstruct(depthData, idxPixel, imageSum0, coords, dir);
+			estimators.AddConstruct(iter, depthData, idxPixel, imageSum0, viewsIDMap0, coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
 		FOREACH(i, threads)
 			threads[i].start(EstimateDepthMapTmp, &estimators[i]);
@@ -775,7 +770,7 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 		idxPixel = -1;
 		ASSERT(estimators.IsEmpty());
 		while (estimators.GetSize() < nMaxThreads)
-			estimators.AddConstruct(depthData, idxPixel, imageSum0, coords, DepthEstimator::DIRS);
+			estimators.AddConstruct(OPTDENSE::nEstimationIters, depthData, idxPixel, imageSum0, viewsIDMap0, coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
 		FOREACH(i, threads)
 			threads[i].start(EndDepthMapTmp, &estimators[i]);

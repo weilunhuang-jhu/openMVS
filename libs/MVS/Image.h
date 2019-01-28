@@ -142,7 +142,7 @@ public:
 	BOOST_SERIALIZATION_SPLIT_MEMBER()
 	#endif
 };
-typedef MVS_API SEACAVE::cList<Image, const Image&, 2, 16, IIndex> ImageArr;
+typedef MVS_API CLISTDEF2IDX(Image,IIndex) ImageArr;
 /*----------------------------------------------------------------*/
 
 } // namespace MVS

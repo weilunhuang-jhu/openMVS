@@ -1556,6 +1556,11 @@ template <typename FLT1, typename FLT2>
 inline TPoint3<FLT1> Cast(const TPoint3<FLT2>& pt) {
 	return pt;
 }
+// Matrix
+template <typename FLT1, typename FLT2, int m, int n>
+inline TMatrix<FLT1,m,n> Cast(const TMatrix<FLT2,m,n>& v) {
+	return v;
+}
 /*----------------------------------------------------------------*/
 
 

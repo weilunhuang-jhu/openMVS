@@ -90,11 +90,13 @@ MDEFVAR_OPTDENSE_uint32(nEstimateColors, "Estimate Colors", "should we estimate 
 MDEFVAR_OPTDENSE_uint32(nEstimateNormals, "Estimate Normals", "should we estimate the normals for the dense point-cloud?", "0", "1", "2")
 MDEFVAR_OPTDENSE_float(fNCCThresholdKeep, "NCC Threshold Keep", "Maximum 1-NCC score accepted for a match", "0.5", "0.3")
 MDEFVAR_OPTDENSE_float(fNCCThresholdRefine, "NCC Threshold Refine", "1-NCC score under which a match is not refined anymore", "0.03")
+MDEFVAR_OPTDENSE_float(fNCCThresholdMcInit, "NCC Threshold McInit", "Maximum 1-NCC score accepted for a match", "0.8")
+MDEFVAR_OPTDENSE_float(fNCCThresholdMcUp, "NCC Threshold McUp", "Maximum 1-NCC score accepted for a match", "1.2")
 MDEFVAR_OPTDENSE_uint32(nEstimationIters, "Estimation Iters", "Number of iterations for depth-map refinement", "4")
 MDEFVAR_OPTDENSE_uint32(nRandomIters, "Random Iters", "Number of iterations for random assignment per pixel", "6")
 MDEFVAR_OPTDENSE_uint32(nRandomMaxScale, "Random Max Scale", "Maximum number of iterations to skip during random assignment", "2")
-MDEFVAR_OPTDENSE_float(fRandomDepthRatio, "Random Depth Ratio", "Depth range ratio of the current estimate for random plane assignment", "0.01")
-MDEFVAR_OPTDENSE_float(fRandomAngle1Range, "Random Angle1 Range", "Angle 1 range for random plane assignment (in degrees)", "90.0")
+MDEFVAR_OPTDENSE_float(fRandomDepthRatio, "Random Depth Ratio", "Depth range ratio of the current estimate for random plane assignment", "0.005")
+MDEFVAR_OPTDENSE_float(fRandomAngle1Range, "Random Angle1 Range", "Angle 1 range for random plane assignment (in degrees)", "25.0")
 MDEFVAR_OPTDENSE_float(fRandomAngle2Range, "Random Angle2 Range", "Angle 2 range for random plane assignment (in degrees)", "15.0")
 MDEFVAR_OPTDENSE_float(fRandomSmoothDepth, "Random Smooth Depth", "Depth variance used during neighbor smoothness assignment (ratio)", "0.006")
 MDEFVAR_OPTDENSE_float(fRandomSmoothNormal, "Random Smooth Normal", "Normal variance used during neighbor smoothness assignment (degrees)", "8.5")
@@ -224,54 +226,60 @@ unsigned DepthData::DecRef()
 
 // S T R U C T S ///////////////////////////////////////////////////
 
-// create the map for converting index to matrix position
-//                         1 2 3
-//  1 2 4 7 5 3 6 8 9 -->  4 5 6
-//                         7 8 9
-void DepthEstimator::MapMatrix2ZigzagIdx(const Image8U::Size& size, DepthEstimator::MapRefArr& coords, BitMatrix& mask, int rawStride)
+// create the map for converting index to matrix position in checkerboard pattern
+//                         1 6 2
+//  1 2 4 7 5 3 6 8 9 -->  7 3 8
+//                         4 9 5
+void DepthEstimator::MapMatrix2CheckerboardIdx(const Image8U::Size& size, MapRefArr& coords, const BitMatrix& mask, int step)
 {
-	typedef DepthEstimator::MapRef MapRef;
-	const int w = size.width;
-	const int w1 = size.width-1;
+	ASSERT(step > 0);
 	coords.Empty();
-	coords.Reserve(size.area());
-	for (int dy=0, h=rawStride; dy<size.height; dy+=h) {
-		if (h*2 > size.height - dy)
-			h = size.height - dy;
-		int lastX = 0;
-		MapRef x(MapRef::ZERO);
-		for (int i=0, ei=w*h; i<ei; ++i) {
-			const MapRef pt(x.x, x.y+dy);
-			if (mask.empty() || mask.isSet(pt))
-				coords.Insert(pt);
-			if (x.x-- == 0 || ++x.y == h) {
-				if (++lastX < w) {
-					x.x = lastX;
-					x.y = 0;
-				} else {
-					x.x = w1;
-					x.y = lastX - w1;
-				}
-			}
-		}
-	}
+	coords.reserve(size.area());
+	const int inc(step<<1);
+	// white
+	for (int y=0, sx=0; y<size.height; y+=step, sx=(sx==0?step:0))
+		for (int x=sx; x<size.width; x+=inc)
+			if (mask.empty() || mask.isSet(y, x))
+				coords.emplace_back(x, y);
+	// black
+	for (int y=0, sx=step; y<size.height; y+=step, sx=(sx==0?step:0))
+		for (int x=sx; x<size.width; x+=inc)
+			if (mask.empty() || mask.isSet(y, x))
+				coords.emplace_back(x, y);
 }
 
+// store pixel neighbors as in Figure 2(d) [1]
+const std::array<const DepthEstimator::DirSamples,8> DepthEstimator::dirs({
+	// dark color
+	/* red    */ DepthEstimator::DirSamples({ImageRef( 0,-1),ImageRef(-1,-2),ImageRef( 1,-2),ImageRef(-2,-3),ImageRef( 2,-3),ImageRef(-3,-4),ImageRef( 3,-4)}),
+	/* blue   */ DepthEstimator::DirSamples({ImageRef( 0, 1),ImageRef(-1, 2),ImageRef( 1, 2),ImageRef(-2, 3),ImageRef( 2, 3),ImageRef(-3, 4),ImageRef( 3, 4)}),
+	/* yellow */ DepthEstimator::DirSamples({ImageRef(-1, 0),ImageRef(-2,-1),ImageRef(-2, 1),ImageRef(-3,-2),ImageRef(-3, 2),ImageRef(-4,-3),ImageRef(-4, 3)}),
+	/* green  */ DepthEstimator::DirSamples({ImageRef( 1, 0),ImageRef( 2,-1),ImageRef( 2, 1),ImageRef( 3,-2),ImageRef( 3, 2),ImageRef( 4,-3),ImageRef( 4, 3)}),
+	// light color
+	/* red    */ DepthEstimator::DirSamples({ImageRef(0,-3),ImageRef(0,-5),ImageRef(0,-7),ImageRef(0,-9),ImageRef(0,-11),ImageRef(0,-13),ImageRef(0,-15),ImageRef(0,-17),ImageRef(0,-19),ImageRef(0,-21),ImageRef(0,-23)}),
+	/* blue   */ DepthEstimator::DirSamples({ImageRef(0, 3),ImageRef(0, 5),ImageRef(0, 7),ImageRef(0, 9),ImageRef(0, 11),ImageRef(0, 13),ImageRef(0, 15),ImageRef(0, 17),ImageRef(0, 19),ImageRef(0, 21),ImageRef(0, 23)}),
+	/* yellow */ DepthEstimator::DirSamples({ImageRef(-3,0),ImageRef(-5,0),ImageRef(-7,0),ImageRef(-9,0),ImageRef(-11,0),ImageRef(-13,0),ImageRef(-15,0),ImageRef(-17,0),ImageRef(-19,0),ImageRef(-21,0),ImageRef(-23,0)}),
+	/* green  */ DepthEstimator::DirSamples({ImageRef( 3,0),ImageRef( 5,0),ImageRef( 7,0),ImageRef( 9,0),ImageRef( 11,0),ImageRef( 13,0),ImageRef( 15,0),ImageRef( 17,0),ImageRef( 19,0),ImageRef( 21,0),ImageRef( 23,0)})
+});
+// store weights used to favor pixels viewed in more images during score averaging
+const std::array<float,5> DepthEstimator::mweights = {0.f, 1.f, 2.01f, 3.03f, 4.06f};
 // replace POWI(0.5f, (int)invScaleRange):      0    1      2       3       4         5         6           7           8             9             10              11
 const float DepthEstimator::scaleRanges[12] = {1.f, 0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f, 0.015625f, 0.0078125f, 0.00390625f, 0.001953125f, 0.0009765625f, 0.00048828125f};
 
-DepthEstimator::DepthEstimator(DepthData& _depthData0, volatile Thread::safe_t& _idx, const Image64F& _image0Sum, const MapRefArr& _coords, ENDIRECTION _dir)
+DepthEstimator::DepthEstimator(unsigned nIter, DepthData& _depthData0, volatile Thread::safe_t& _idx, const Image64F& _image0Sum, ViewsIDMap& _viewsIDMap0, const MapRefArr& _coords)
 	:
-	neighborsData(0,4), neighbors(0,2),
+	neighbors(0,nMaxNeighbors),
+	#ifdef DENSE_SMOOTHNESS
+	neighborsClose(0,4),
+	#endif
 	idxPixel(_idx),
 	scores(_depthData0.images.size()-1),
-	depthMap0(_depthData0.depthMap), normalMap0(_depthData0.normalMap), confMap0(_depthData0.confMap),
+	depthMap0(_depthData0.depthMap), normalMap0(_depthData0.normalMap), confMap0(_depthData0.confMap), viewsIDMap0(_viewsIDMap0),
+	nIteration(nIter),
 	images(InitImages(_depthData0)), image0(_depthData0.images[0]),
 	image0Sum(_image0Sum), coords(_coords), size(_depthData0.images.First().image.size()),
-	#if DENSE_AGGNCC == DENSE_AGGNCC_NTH
-	idxScore((_depthData0.images.size()-1)/3),
-	#endif
-	dir(_dir), dMin(_depthData0.dMin), dMax(_depthData0.dMax),
+	dMin(_depthData0.dMin), dMax(_depthData0.dMax),
+	S(images.size()), O(images.size()),
 	smoothBonusDepth(1.f-OPTDENSE::fRandomSmoothBonus), smoothBonusNormal((1.f-OPTDENSE::fRandomSmoothBonus)*0.96f),
 	smoothSigmaDepth(-1.f/(2.f*SQUARE(OPTDENSE::fRandomSmoothDepth))), // used in exp(-x^2 / (2*(0.006^2)))
 	smoothSigmaNormal(-1.f/(2.f*SQUARE(FD2R(OPTDENSE::fRandomSmoothNormal)))), // used in exp(-x^2 / (2*(0.15^2)))
@@ -280,9 +288,12 @@ DepthEstimator::DepthEstimator(DepthData& _depthData0, volatile Thread::safe_t& 
 	angle2Range(FD2R(OPTDENSE::fRandomAngle2Range)),
 	thConfSmall(OPTDENSE::fNCCThresholdKeep*0.25f),
 	thConfBig(OPTDENSE::fNCCThresholdKeep*0.5f),
-	thRobust(OPTDENSE::fNCCThresholdKeep*1.2f)
+	thRobust(OPTDENSE::fNCCThresholdKeep*1.2f),
+	thMc(OPTDENSE::fNCCThresholdMcInit*EXP(-(float)SQUARE(nIter)/90.f)),
+	thN1(MINF(2u,images.size()-1)), thN2(MINF(3u,images.size())), thK(MINF(4u,images.size()))
 {
-	ASSERT(_depthData0.images.size() >= 2);
+	ASSERT(_depthData0.images.size() >= 1);
+	std::iota(O.begin(), O.end(), 0);
 }
 
 // center a patch of given size on the segment
@@ -305,74 +316,82 @@ bool DepthEstimator::FillPixelPatch()
 	return normSq0 > thMagnitudeSq;
 }
 
+// compute pixel's NCC score in the given target image
+float DepthEstimator::ScorePixelImage(const ViewData& image1, Depth depth, const Normal& normal)
+{
+	// center a patch of given size on the segment and fetch the pixel values in the target image
+	const Matrix3x3f H(ComputeHomographyMatrix(image1, depth, normal));
+	Point2f pt;
+	int n(0);
+	float sum(0);
+	#if DENSE_NCC != DENSE_NCC_DEFAULT
+	float sumSq(0), num(0);
+	#endif
+	for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; ++i) {
+		for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; ++j) {
+			ProjectVertex_3x3_2_2(H.val, Point2f((float)(x0.x+j), (float)(x0.y+i)).ptr(), pt.ptr());
+			if (!image1.view.image.isInsideWithBorder<float,1>(pt))
+				return thRobust;
+			#if DENSE_NCC == DENSE_NCC_FAST
+			const float v(image1.view.image.sample(pt));
+			sum += v;
+			sumSq += SQUARE(v);
+			num += texels0(n++)*v;
+			#else
+			sum += texels1(n++) = image1.view.image.sample(pt);
+			#endif
+		}
+	}
+	ASSERT(n == nTexels);
+	// score similarity of the reference and target texture patches
+	#if DENSE_NCC == DENSE_NCC_FAST
+	const float normSq1(sumSq-SQUARE(sum/nSizeWindow));
+	#else
+	const float normSq1(normSqDelta<float,float,nTexels>(texels1.data(), sum/(float)nTexels));
+	#endif
+	const float nrm(normSq0*normSq1);
+	if (nrm <= 0.f)
+		return thRobust;
+	#if DENSE_NCC == DENSE_NCC_DEFAULT
+	const float num(texels0.dot(texels1));
+	#endif
+	const float ncc(CLAMP(num/SQRT(nrm), -1.f, 1.f));
+	float score = 1.f - ncc;
+	#ifdef DENSE_SMOOTHNESS
+	// encourage smoothness
+	for (const NeighborEstimate& neighbor: neighborsClose) {
+		score *= 1.f - smoothBonusDepth * EXP(SQUARE((depth-neighbor.depth)/depth) * smoothSigmaDepth);
+		score *= 1.f - smoothBonusNormal * EXP(SQUARE(ACOS(ComputeAngle<float,float>(normal.ptr(), neighbor.normal.ptr()))) * smoothSigmaNormal);
+	}
+	#endif
+	return score;
+}
+
 // compute pixel's NCC score
-float DepthEstimator::ScorePixel(Depth depth, const Normal& normal)
+float DepthEstimator::ScorePixel(Depth depth, const Normal& normal, const ViewsID& viewsID)
 {
 	ASSERT(depth > 0 && normal.dot(Cast<float>(static_cast<const Point3&>(X0))) < 0);
-	FOREACH(idx, images) {
-		// center a patch of given size on the segment and fetch the pixel values in the target image
-		const ViewData& image1 = images[idx];
-		float& score = scores[idx];
-		const Matrix3x3f H(ComputeHomographyMatrix(image1, depth, normal));
-		Point2f pt;
-		int n(0);
-		float sum(0);
-		#if DENSE_NCC != DENSE_NCC_DEFAULT
-		float sumSq(0), num(0);
-		#endif
-		for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; ++i) {
-			for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; ++j) {
-				ProjectVertex_3x3_2_2(H.val, Point2f((float)(x0.x+j), (float)(x0.y+i)).ptr(), pt.ptr());
-				if (!image1.view.image.isInsideWithBorder<float,1>(pt)) {
-					score = thRobust;
-					goto NEXT_IMAGE;
-				}
-				#if DENSE_NCC == DENSE_NCC_FAST
-				const float v(image1.view.image.sample(pt));
-				sum += v;
-				sumSq += SQUARE(v);
-				num += texels0(n++)*v;
-				#else
-				sum += texels1(n++) = image1.view.image.sample(pt);
-				#endif
-			}
+	// compute score for this pixel as the average score of the given target views
+	if (viewsID[0] < 255) {
+		float conf(0); unsigned n(0);
+		for (unsigned i=0; i<thK; ++i) {
+			const uint8_t idxView(viewsID[i]);
+			if (idxView == 255)
+				break;
+			conf += ScorePixelImage(images[idxView], depth, normal);
+			++n;
 		}
-		{
-		ASSERT(n == nTexels);
-		// score similarity of the reference and target texture patches
-		#if DENSE_NCC == DENSE_NCC_FAST
-		const float normSq1(sumSq-SQUARE(sum/nSizeWindow));
-		#else
-		const float normSq1(normSqDelta<float,float,nTexels>(texels1.data(), sum/(float)nTexels));
-		#endif
-		const float nrm(normSq0*normSq1);
-		if (nrm <= 0.f) {
-			score = thRobust;
-			continue;
-		}
-		#if DENSE_NCC == DENSE_NCC_DEFAULT
-		const float num(texels0.dot(texels1));
-		#endif
-		const float ncc(CLAMP(num/SQRT(nrm), -1.f, 1.f));
-		score = 1.f - ncc;
-		// encourage smoothness
-		for (const NeighborData& neighbor: neighborsData) {
-			score *= 1.f - smoothBonusDepth * EXP(SQUARE((depth-neighbor.depth)/depth) * smoothSigmaDepth);
-			score *= 1.f - smoothBonusNormal * EXP(SQUARE(ACOS(ComputeAngle<float,float>(normal.ptr(), neighbor.normal.ptr()))) * smoothSigmaNormal);
-		}
-		}
-		NEXT_IMAGE:;
+		conf /= mweights[n];
+		return conf;
 	}
-	#if DENSE_AGGNCC == DENSE_AGGNCC_NTH
-	// set score as the nth element
-	return scores.size() > 1 ? scores.GetNth(idxScore) : scores.front();
-	#elif DENSE_AGGNCC == DENSE_AGGNCC_MEAN
-	// set score as the average similarity
-	return scores.mean();
-	#else
-	// set score as the min similarity
-	return scores.minCoeff();
-	#endif
+	// compute score for this pixel as the average score of the top target views
+	ASSERT(scores.size() == images.size());
+	FOREACH(idxView, images)
+		scores[idxView] = ScorePixelImage(images[idxView], depth, normal);
+	scores.Sort();
+	float conf(std::accumulate(scores.cbegin(), scores.cbegin()+thK, 0.f));
+	conf /= mweights[thK];
+	return conf;
 }
 
 // run propagation and random refinement cycles;
@@ -380,99 +399,137 @@ float DepthEstimator::ScorePixel(Depth depth, const Normal& normal)
 void DepthEstimator::ProcessPixel(IDX idx)
 {
 	// compute pixel coordinates from pixel index and its neighbors
-	ASSERT(dir == LT2RB || dir == RB2LT);
-	if (!PreparePixelPatch(dir == LT2RB ? coords[idx] : coords[coords.GetSize()-1-idx]))
+	if (!PreparePixelPatch(coords[idx]))
 		return;
 
 	float& conf = confMap0(x0);
 	unsigned invScaleRange(DecodeScoreScale(conf));
 	if ((invScaleRange <= 2 || conf > OPTDENSE::fNCCThresholdRefine) && FillPixelPatch()) {
-		// find neighbors
-		neighbors.Empty();
-		neighborsData.Empty();
-		if (dir == LT2RB) {
-			// direction from left-top to right-bottom corner
-			if (x0.x > nSizeHalfWindow) {
-				const ImageRef nx(x0.x-1, x0.y);
-				const Depth ndepth(depthMap0(nx));
-				if (ndepth > 0) {
-					neighbors.emplace_back(nx);
-					neighborsData.emplace_back(ndepth,normalMap0(nx));
-				}
-			}
-			if (x0.y > nSizeHalfWindow) {
-				const ImageRef nx(x0.x, x0.y-1);
-				const Depth ndepth(depthMap0(nx));
-				if (ndepth > 0) {
-					neighbors.emplace_back(nx);
-					neighborsData.emplace_back(ndepth,normalMap0(nx));
-				}
-			}
-			if (x0.x < size.width-nSizeHalfWindow) {
-				const ImageRef nx(x0.x+1, x0.y);
-				const Depth ndepth(depthMap0(nx));
-				if (ndepth > 0)
-					neighborsData.emplace_back(ndepth,normalMap0(nx));
-			}
-			if (x0.y < size.height-nSizeHalfWindow) {
-				const ImageRef nx(x0.x, x0.y+1);
-				const Depth ndepth(depthMap0(nx));
-				if (ndepth > 0)
-					neighborsData.emplace_back(ndepth,normalMap0(nx));
-			}
-		} else {
-			ASSERT(dir == RB2LT);
-			// direction from right-bottom to left-top corner
-			if (x0.x < size.width-nSizeHalfWindow) {
-				const ImageRef nx(x0.x+1, x0.y);
-				const Depth ndepth(depthMap0(nx));
-				if (ndepth > 0) {
-					neighbors.emplace_back(nx);
-					neighborsData.emplace_back(ndepth,normalMap0(nx));
-				}
-			}
-			if (x0.y < size.height-nSizeHalfWindow) {
-				const ImageRef nx(x0.x, x0.y+1);
-				const Depth ndepth(depthMap0(nx));
-				if (ndepth > 0) {
-					neighbors.emplace_back(nx);
-					neighborsData.emplace_back(ndepth,normalMap0(nx));
-				}
-			}
-			if (x0.x > nSizeHalfWindow) {
-				const ImageRef nx(x0.x-1, x0.y);
-				const Depth ndepth(depthMap0(nx));
-				if (ndepth > 0)
-					neighborsData.emplace_back(ndepth,normalMap0(nx));
-			}
-			if (x0.y > nSizeHalfWindow) {
-				const ImageRef nx(x0.x, x0.y-1);
-				const Depth ndepth(depthMap0(nx));
-				if (ndepth > 0)
-					neighborsData.emplace_back(ndepth,normalMap0(nx));
-			}
-		}
 		Depth& depth = depthMap0(x0);
 		Normal& normal = normalMap0(x0);
+		ViewsID& viewsID = viewsIDMap0(x0);
 		const Normal viewDir(Cast<float>(static_cast<const Point3&>(X0)));
 		ASSERT(depth > 0 && normal.dot(viewDir) < 0);
-		// check if any of the neighbor estimates are better then the current estimate
-		FOREACH(n, neighbors) {
-			float nconf(confMap0(neighbors[n]));
-			const unsigned ninvScaleRange(DecodeScoreScale(nconf));
-			if (nconf >= OPTDENSE::fNCCThresholdKeep)
+		#ifdef DENSE_SMOOTHNESS
+		// find close neighbors
+		neighborsClose.Empty();
+		static const ImageRef neighborOffs[4] = {ImageRef(0,-1), ImageRef(-1,0), ImageRef(0,1), ImageRef(1,0)};
+		for (const ImageRef& off: neighborOffs) {
+			const ImageRef nx(x0+off);
+			if (!depthMap0.isInside(nx))
 				continue;
-			const NeighborData& neighbor = neighborsData[n];
+			const Depth ndepth(depthMap0(nx));
+			if (ndepth <= 0)
+				continue;
+			neighborsClose.emplace_back(NeighborEstimate{ndepth, normalMap0(nx)});
+		}
+		#endif
+		// find neighbors
+		neighbors.Empty();
+		STATIC_ASSERT(dirs.size() == nMaxNeighbors);
+		for (size_t idxDir=0; idxDir<nMaxNeighbors; ++idxDir) {
+			const DirSamples& samples = dirs[idxDir];
+			ImageRef bestNx; Depth bestDepth; float bestConf(FLT_MAX);
+			for (const ImageRef& off: samples) {
+				const ImageRef nx(x0+off);
+				if (!depthMap0.isInside(nx))
+					continue;
+				const Depth ndepth(depthMap0(nx));
+				if (ndepth <= 0)
+					continue;
+				const float nconf(confMap0(nx));
+				if (bestConf > nconf) {
+					bestNx = nx;
+					bestDepth = ndepth;
+					bestConf = nconf;
+				}
+			}
+			if (bestConf < FLT_MAX) {
+				neighbors.emplace_back(NeighborData{bestNx, bestDepth, normalMap0(bestNx)});
+				CorrectNormal(neighbors.back().normal);
+			}
+		}
+		// estiamte all selected neighbors
+		M.resize(neighbors.size(), images.size());
+		FOREACH(idxNeigh, neighbors) {
+			const NeighborData& neighbor = neighbors[idxNeigh];
 			ASSERT(neighbor.depth > 0);
-			if (neighbor.normal.dot(viewDir) >= 0)
-				continue;
-			const float newconf(ScorePixel(neighbor.depth, neighbor.normal));
-			ASSERT(newconf >= 0 && newconf <= 2);
-			if (conf > newconf) {
-				conf = newconf;
-				depth = neighbor.depth;
-				normal = neighbor.normal;
-				invScaleRange = (ninvScaleRange>1 ? ninvScaleRange-1 : ninvScaleRange);
+			#if 0 // should propagate faster the neighbors, but for some reason it also clusters them
+			const Depth ndepth(InterpolatePixel(neighbor.x, neighbor.depth, neighbor.normal));
+			#else
+			const Depth ndepth(neighbor.depth);
+			#endif
+			FOREACH(idxView, images)
+				M(idxNeigh, idxView) = ScorePixelImage(images[idxView], ndepth, neighbor.normal);
+		}
+		// select best hypothesis and set of valid views
+		const float beta(0.3f);
+		FOREACH(idxView, images) {
+			unsigned n1(0), n2(0);
+			FOREACH(idxNeigh, neighbors) {
+				const float m(M(idxNeigh, idxView));
+				if (m > OPTDENSE::fNCCThresholdMcUp)
+					++n2;
+				else if (m < thMc)
+					++n1;
+			}
+			if (n1 > thN1 && n2 < thN2) {
+				float avgC(0);
+				FOREACH(idxNeigh, neighbors) {
+					const float C(EXP(-SQUARE(M(idxNeigh, idxView))/(2.f*beta)));
+					avgC += C;
+				}
+				avgC /= (float)neighbors.size();
+				S[idxView] = avgC;
+			} else {
+				S[idxView] = FLT_MAX;
+			}
+		}
+		if (viewsID[0] < 255) {
+			// boost the importance of the best view in the previous iteration
+			float& psi = S[viewsID[0]];
+			if (psi < FLT_MAX)
+				psi *= 2.f;
+			else
+				psi = 0.2f;
+		}
+		O.Sort([&](IIndex i, IIndex j) { return S[i] > S[j]; });
+		if (S[O.front()] < FLT_MAX) {
+			// compute weighted distance and select the minimum
+			float bestDist(FLT_MAX); IIndex bestIdxNeigh;
+			FOREACH(idxNeigh, neighbors) {
+				TAccumulator<float> m;
+				for (uint8_t idxView: O) {
+					if (S[idxView] == FLT_MAX)
+						break;
+					m.Add(M(idxNeigh, idxView), S[idxView]);
+				}
+				const float dist(m.Normalized());
+				if (bestDist > dist) {
+					bestDist = dist;
+					bestIdxNeigh = idxNeigh;
+				}
+			}
+			// store best views and replace current estimate if better confidence
+			if (bestDist < FLT_MAX) {
+				float nconf(0); unsigned n(0);
+				for (unsigned i=0; i<thK; ++i) {
+					const uint8_t idxView(O[i]);
+					if (S[idxView] == FLT_MAX) {
+						viewsID[i] = 255;
+					} else {
+						viewsID[i] = idxView;
+						nconf += M(bestIdxNeigh, idxView);
+						++n;
+					}
+				}
+				nconf /= mweights[n];
+				if (conf > nconf) {
+					const NeighborData& neighbor = neighbors[bestIdxNeigh];
+					depth = neighbor.depth;
+					normal = neighbor.normal;
+					conf = nconf;
+				}
 			}
 		}
 		// check few random solutions close to the current estimate in an attempt to find a better estimate
@@ -497,7 +554,7 @@ void DepthEstimator::ProcessPixel(IDX idx)
 			Dir2Normal(np, nnormal);
 			if (nnormal.dot(viewDir) >= 0)
 				continue;
-			const float nconf(ScorePixel(ndepth, nnormal));
+			const float nconf(ScorePixel(ndepth, nnormal, viewsID));
 			ASSERT(nconf >= 0);
 			if (conf > nconf) {
 				conf = nconf;

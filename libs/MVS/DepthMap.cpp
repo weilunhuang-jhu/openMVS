@@ -426,7 +426,7 @@ void DepthEstimator::ProcessPixel(IDX idx)
 		#endif
 		// find neighbors
 		neighbors.Empty();
-		STATIC_ASSERT(dirs.size() == nMaxNeighbors);
+		ASSERT(dirs.size() == nMaxNeighbors);
 		for (size_t idxDir=0; idxDir<nMaxNeighbors; ++idxDir) {
 			const DirSamples& samples = dirs[idxDir];
 			ImageRef bestNx; Depth bestDepth; float bestConf(FLT_MAX);
@@ -482,25 +482,22 @@ void DepthEstimator::ProcessPixel(IDX idx)
 				avgC /= (float)neighbors.size();
 				S[idxView] = avgC;
 			} else {
-				S[idxView] = FLT_MAX;
+				S[idxView] = 0;
 			}
 		}
 		if (viewsID[0] < 255) {
 			// boost the importance of the best view in the previous iteration
 			float& psi = S[viewsID[0]];
-			if (psi < FLT_MAX)
-				psi *= 2.f;
-			else
-				psi = 0.2f;
+			psi = MAXF(psi*2.f, 0.2f);
 		}
 		O.Sort([&](IIndex i, IIndex j) { return S[i] > S[j]; });
-		if (S[O.front()] < FLT_MAX) {
+		if (S[O.front()] > 0) {
 			// compute weighted distance and select the minimum
 			float bestDist(FLT_MAX); IIndex bestIdxNeigh;
 			FOREACH(idxNeigh, neighbors) {
 				TAccumulator<float> m;
 				for (uint8_t idxView: O) {
-					if (S[idxView] == FLT_MAX)
+					if (S[idxView] == 0)
 						break;
 					m.Add(M(idxNeigh, idxView), S[idxView]);
 				}
@@ -515,7 +512,7 @@ void DepthEstimator::ProcessPixel(IDX idx)
 				float nconf(0); unsigned n(0);
 				for (unsigned i=0; i<thK; ++i) {
 					const uint8_t idxView(O[i]);
-					if (S[idxView] == FLT_MAX) {
+					if (S[idxView] == 0) {
 						viewsID[i] = 255;
 					} else {
 						viewsID[i] = idxView;

@@ -78,7 +78,7 @@ MDEFVAR_OPTDENSE_float(fMinArea, "Min Area", "Min shared area for accepting the 
 MDEFVAR_OPTDENSE_float(fMinAngle, "Min Angle", "Min angle for accepting the depth triangulation", "3.0")
 MDEFVAR_OPTDENSE_float(fOptimAngle, "Optim Angle", "Optimal angle for computing the depth triangulation", "10.0")
 MDEFVAR_OPTDENSE_float(fMaxAngle, "Max Angle", "Max angle for accepting the depth triangulation", "45.0")
-MDEFVAR_OPTDENSE_float(fDescriptorMinMagnitudeThreshold, "Descriptor Min Magnitude Threshold", "minimum texture variance accepted when matching two patches (0 - disabled)", "0.01")
+MDEFVAR_OPTDENSE_float(fDescriptorMinMagnitudeThreshold, "Descriptor Min Magnitude Threshold", "minimum texture variance accepted when matching two patches (0 - disabled)", "0.005")
 MDEFVAR_OPTDENSE_float(fDepthDiffThreshold, "Depth Diff Threshold", "maximum variance allowed for the depths during refinement", "0.01")
 MDEFVAR_OPTDENSE_float(fPairwiseMul, "Pairwise Mul", "pairwise cost scale to match the unary cost", "0.3")
 MDEFVAR_OPTDENSE_float(fOptimizerEps, "Optimizer Eps", "MRF optimizer stop epsilon", "0.005")
@@ -266,7 +266,15 @@ const std::array<float,5> DepthEstimator::mweights = {0.f, 1.f, 2.01f, 3.03f, 4.
 // replace POWI(0.5f, (int)invScaleRange):      0    1      2       3       4         5         6           7           8             9             10              11
 const float DepthEstimator::scaleRanges[12] = {1.f, 0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f, 0.015625f, 0.0078125f, 0.00390625f, 0.001953125f, 0.0009765625f, 0.00048828125f};
 
-DepthEstimator::DepthEstimator(unsigned nIter, DepthData& _depthData0, volatile Thread::safe_t& _idx, const Image64F& _image0Sum, ViewsIDMap& _viewsIDMap0, const MapRefArr& _coords)
+DepthEstimator::DepthEstimator(
+	unsigned nIter, DepthData& _depthData0, volatile Thread::safe_t& _idx,
+	#if DENSE_NCC == DENSE_NCC_WEIGHTED
+	WeightMap& _weightMap0,
+	#else
+	const Image64F& _image0Sum,
+	#endif
+	ViewsIDMap& _viewsIDMap0,
+	const MapRefArr& _coords)
 	:
 	neighbors(0,nMaxNeighbors),
 	#ifdef DENSE_SMOOTHNESS
@@ -275,9 +283,15 @@ DepthEstimator::DepthEstimator(unsigned nIter, DepthData& _depthData0, volatile 
 	idxPixel(_idx),
 	scores(_depthData0.images.size()-1),
 	depthMap0(_depthData0.depthMap), normalMap0(_depthData0.normalMap), confMap0(_depthData0.confMap), viewsIDMap0(_viewsIDMap0),
+	#if DENSE_NCC == DENSE_NCC_WEIGHTED
+	weightMap0(_weightMap0),
+	#endif
 	nIteration(nIter),
 	images(InitImages(_depthData0)), image0(_depthData0.images[0]),
-	image0Sum(_image0Sum), coords(_coords), size(_depthData0.images.First().image.size()),
+	#if DENSE_NCC != DENSE_NCC_WEIGHTED
+	image0Sum(_image0Sum),
+	#endif
+	coords(_coords), size(_depthData0.images.First().image.size()),
 	dMin(_depthData0.dMin), dMax(_depthData0.dMax),
 	S(images.size()), O(images.size()),
 	smoothBonusDepth(1.f-OPTDENSE::fRandomSmoothBonus), smoothBonusNormal((1.f-OPTDENSE::fRandomSmoothBonus)*0.96f),
@@ -306,14 +320,44 @@ bool DepthEstimator::PreparePixelPatch(const ImageRef& x)
 // fetch the patch pixel values in the main image
 bool DepthEstimator::FillPixelPatch()
 {
+	#if DENSE_NCC != DENSE_NCC_WEIGHTED
 	const float mean(GetImage0Sum(x0)/nTexels);
 	normSq0 = 0;
 	float* pTexel0 = texels0.data();
 	for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; ++i)
 		for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; ++j)
 			normSq0 += SQUARE(*pTexel0++ = image0.image(x0.y+i, x0.x+j)-mean);
-	X0 = (const Vec3&)image0.camera.TransformPointI2C(Cast<REAL>(x0));
-	return normSq0 > thMagnitudeSq;
+	#else
+	Weight& w = weightMap0[x0.y*image0.image.width()+x0.x];
+	if (w.normSq0 == 0) {
+		w.sumWeights = 0;
+		int n = 0;
+		const float colCenter = image0.image(x0);
+		for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; ++i) {
+			for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; ++j) {
+				Weight::Pixel& pw = w.weights[n++];
+				w.normSq0 +=
+					(pw.tempWeight = image0.image(x0.y+i, x0.x+j)) *
+					(pw.weight = GetWeight(ImageRef(j,i), colCenter));
+				w.sumWeights += pw.weight;
+			}
+		}
+		ASSERT(n == nTexels);
+		const float tm(w.normSq0/w.sumWeights);
+		w.normSq0 = 0;
+		n = 0;
+		do {
+			Weight::Pixel& pw = w.weights[n];
+			const float t(pw.tempWeight - tm);
+			w.normSq0 += (pw.tempWeight = pw.weight * t) * t;
+		} while (++n < nTexels);
+	}
+	normSq0 = w.normSq0;
+	#endif
+	if (normSq0 < thMagnitudeSq)
+		return false;
+	reinterpret_cast<Point3&>(X0) = image0.camera.TransformPointI2C(Cast<REAL>(x0));
+	return true;
 }
 
 // compute pixel's NCC score in the given target image
@@ -321,41 +365,57 @@ float DepthEstimator::ScorePixelImage(const ViewData& image1, Depth depth, const
 {
 	// center a patch of given size on the segment and fetch the pixel values in the target image
 	const Matrix3x3f H(ComputeHomographyMatrix(image1, depth, normal));
-	Point2f pt;
+	Point3f X;
+	ProjectVertex_3x3_2_3(H.val, Point2f(float(x0.x-nSizeHalfWindow),float(x0.y-nSizeHalfWindow)).ptr(), X.ptr());
+	Point3f baseX(X);
 	int n(0);
 	float sum(0);
 	#if DENSE_NCC != DENSE_NCC_DEFAULT
 	float sumSq(0), num(0);
 	#endif
+	#if DENSE_NCC == DENSE_NCC_WEIGHTED
+	const Weight& w = weightMap0[x0.y*image0.image.width()+x0.x];
+	#endif
 	for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; ++i) {
 		for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; ++j) {
-			ProjectVertex_3x3_2_2(H.val, Point2f((float)(x0.x+j), (float)(x0.y+i)).ptr(), pt.ptr());
+			const Point2f pt(X);
 			if (!image1.view.image.isInsideWithBorder<float,1>(pt))
 				return thRobust;
-			#if DENSE_NCC == DENSE_NCC_FAST
 			const float v(image1.view.image.sample(pt));
+			#if DENSE_NCC == DENSE_NCC_FAST
 			sum += v;
 			sumSq += SQUARE(v);
 			num += texels0(n++)*v;
+			#elif DENSE_NCC == DENSE_NCC_WEIGHTED
+			const Weight::Pixel& pw = w.weights[n++];
+			const float vw(v*pw.weight);
+			sum += vw;
+			sumSq += v*vw;
+			num += v*pw.tempWeight;
 			#else
-			sum += texels1(n++) = image1.view.image.sample(pt);
+			sum += texels1(n++)=v;
 			#endif
+			X.x += H[0]; X.y += H[3]; X.z += H[6];
 		}
+		baseX.x += H[1]; baseX.y += H[4]; baseX.z += H[7];
+		X = baseX;
 	}
 	ASSERT(n == nTexels);
 	// score similarity of the reference and target texture patches
 	#if DENSE_NCC == DENSE_NCC_FAST
 	const float normSq1(sumSq-SQUARE(sum/nSizeWindow));
+	#elif DENSE_NCC == DENSE_NCC_WEIGHTED
+	const float normSq1(sumSq-SQUARE(sum)/w.sumWeights);
 	#else
 	const float normSq1(normSqDelta<float,float,nTexels>(texels1.data(), sum/(float)nTexels));
 	#endif
-	const float nrm(normSq0*normSq1);
-	if (nrm <= 0.f)
+	const float nrmSq(normSq0*normSq1);
+	if (nrmSq <= 0.f)
 		return thRobust;
 	#if DENSE_NCC == DENSE_NCC_DEFAULT
 	const float num(texels0.dot(texels1));
 	#endif
-	const float ncc(CLAMP(num/SQRT(nrm), -1.f, 1.f));
+	const float ncc(CLAMP(num/SQRT(nrmSq), -1.f, 1.f));
 	float score = 1.f - ncc;
 	#ifdef DENSE_SMOOTHNESS
 	// encourage smoothness

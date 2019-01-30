@@ -44,7 +44,8 @@
 // NCC type used for patch-similarity computation during depth-map estimation
 #define DENSE_NCC_DEFAULT 0
 #define DENSE_NCC_FAST 1
-#define DENSE_NCC DENSE_NCC_FAST
+#define DENSE_NCC_WEIGHTED 2
+#define DENSE_NCC DENSE_NCC_WEIGHTED
 
 // uncomment to enable smoothness used during depth-map estimation
 //#define DENSE_SMOOTHNESS
@@ -113,8 +114,19 @@ extern float fRandomSmoothBonus;
 /*----------------------------------------------------------------*/
 
 
-typedef TImage<ViewsID> ViewsIDMap;
+template <int nTexels>
+struct WeightedPatchFix {
+	struct Pixel {
+		float weight;
+		float tempWeight;
+	};
+	Pixel weights[nTexels];
+	float sumWeights;
+	float normSq0;
+	WeightedPatchFix() : normSq0(0) {}
+};
 
+typedef TImage<ViewsID> ViewsIDMap;
 
 struct MVS_API DepthData {
 	struct ViewData {
@@ -214,6 +226,11 @@ struct MVS_API DepthEstimator {
 	};
 	#endif
 
+	#if DENSE_NCC == DENSE_NCC_WEIGHTED
+	typedef WeightedPatchFix<nTexels> Weight;
+	typedef CLISTDEFIDX(Weight,int) WeightMap;
+	#endif
+
 	struct ViewData {
 		const DepthData::ViewData& view;
 		const Matrix3x3 Hl;   //
@@ -235,7 +252,9 @@ struct MVS_API DepthEstimator {
 	Vec3 X0;	      //
 	ImageRef x0;	  // constants during one pixel loop
 	float normSq0;	  //
+	#if DENSE_NCC != DENSE_NCC_WEIGHTED
 	TexelVec texels0; //
+	#endif
 	#if DENSE_NCC == DENSE_NCC_DEFAULT
 	TexelVec texels1;
 	#endif
@@ -244,11 +263,16 @@ struct MVS_API DepthEstimator {
 	NormalMap& normalMap0;
 	ConfidenceMap& confMap0;
 	ViewsIDMap& viewsIDMap0;
+	#if DENSE_NCC == DENSE_NCC_WEIGHTED
+	WeightMap& weightMap0;
+	#endif
 
 	const unsigned nIteration; // current PatchMatch iteration
 	const CLISTDEF0IDX(ViewData,IIndex) images; // neighbor images used
 	const DepthData::ViewData& image0;
+	#if DENSE_NCC != DENSE_NCC_WEIGHTED
 	const Image64F& image0Sum; // integral image used to fast compute patch mean intensity
+	#endif
 	const MapRefArr& coords;
 	const Image8U::Size size;
 	const Depth dMin, dMax;
@@ -260,7 +284,15 @@ struct MVS_API DepthEstimator {
 	static const std::array<const DirSamples,8> dirs;
 	static const std::array<float,5> mweights;
 
-	DepthEstimator(unsigned nIter, DepthData& _depthData0, volatile Thread::safe_t& _idx, const Image64F& _image0Sum, ViewsIDMap& _viewsIDMap0, const MapRefArr& _coords);
+	DepthEstimator(
+		unsigned nIter, DepthData& _depthData0, volatile Thread::safe_t& _idx,
+		#if DENSE_NCC == DENSE_NCC_WEIGHTED
+		WeightMap& _weightMap0,
+		#else
+		const Image64F& _image0Sum,
+		#endif
+		ViewsIDMap& _viewsIDMap0,
+		const MapRefArr& _coords);
 
 	bool PreparePixelPatch(const ImageRef&);
 	bool FillPixelPatch();
@@ -268,6 +300,7 @@ struct MVS_API DepthEstimator {
 	float ScorePixel(Depth, const Normal&, const ViewsID&);
 	void ProcessPixel(IDX idx);
 	
+	#if DENSE_NCC != DENSE_NCC_WEIGHTED
 	inline float GetImage0Sum(const ImageRef& p) const {
 		const ImageRef p0(p.x-nSizeHalfWindow, p.y-nSizeHalfWindow);
 		const ImageRef p1(p0.x+nSizeWindow, p0.y);
@@ -275,6 +308,19 @@ struct MVS_API DepthEstimator {
 		const ImageRef p3(p0.x+nSizeWindow, p0.y+nSizeWindow);
 		return (float)(image0Sum(p3) - image0Sum(p2) - image0Sum(p1) + image0Sum(p0));
 	}
+	#endif
+
+	#if DENSE_NCC == DENSE_NCC_WEIGHTED
+	float GetWeight(const ImageRef& x, float center) const {
+		// color weight [0..1]
+		const float sigmaColor(-1.f/(2.f*SQUARE(0.2f)));
+		const float wColor(SQUARE(image0.image(x0+x)-center) * sigmaColor);
+		// spatial weight [0..1]
+		const float sigmaSpatial(-1.f/(2.f*SQUARE((int)nSizeHalfWindow)));
+		const float wSpatial(float(SQUARE(x.x) + SQUARE(x.y)) * sigmaSpatial);
+		return EXP(wColor+wSpatial);
+	}
+	#endif
 
 	inline Matrix3x3f ComputeHomographyMatrix(const ViewData& img, Depth depth, const Normal& normal) const {
 		#if 0

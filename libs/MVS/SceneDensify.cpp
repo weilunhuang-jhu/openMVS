@@ -694,8 +694,12 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 	}
 
 	// init integral images and index to image-ref map for the reference data
+	#if DENSE_NCC == DENSE_NCC_WEIGHTED
+	DepthEstimator::WeightMap weightMap0(size.area()-(size.width+1)*DepthEstimator::nSizeHalfWindow);
+	#else
 	Image64F imageSum0;
 	cv::integral(image.image, imageSum0, CV_64F);
+	#endif
 	if (prevDepthMapSize != size) {
 		prevDepthMapSize = size;
 		BitMatrix mask;
@@ -719,7 +723,14 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 		idxPixel = -1;
 		ASSERT(estimators.IsEmpty());
 		while (estimators.GetSize() < nMaxThreads)
-			estimators.AddConstruct(0, depthData, idxPixel, imageSum0, viewsIDMap0, coords);
+			estimators.AddConstruct(0, depthData, idxPixel,
+				#if DENSE_NCC == DENSE_NCC_WEIGHTED
+				weightMap0,
+				#else
+				imageSum0,
+				#endif
+				viewsIDMap0,
+				coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
 		FOREACH(i, threads)
 			threads[i].start(ScoreDepthMapTmp, &estimators[i]);
@@ -744,7 +755,14 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 		idxPixel = -1;
 		ASSERT(estimators.IsEmpty());
 		while (estimators.GetSize() < nMaxThreads)
-			estimators.AddConstruct(iter, depthData, idxPixel, imageSum0, viewsIDMap0, coords);
+			estimators.AddConstruct(iter, depthData, idxPixel,
+				#if DENSE_NCC == DENSE_NCC_WEIGHTED
+				weightMap0,
+				#else
+				imageSum0,
+				#endif
+				viewsIDMap0,
+				coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
 		FOREACH(i, threads)
 			threads[i].start(EstimateDepthMapTmp, &estimators[i]);
@@ -770,7 +788,14 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 		idxPixel = -1;
 		ASSERT(estimators.IsEmpty());
 		while (estimators.GetSize() < nMaxThreads)
-			estimators.AddConstruct(OPTDENSE::nEstimationIters, depthData, idxPixel, imageSum0, viewsIDMap0, coords);
+			estimators.AddConstruct(OPTDENSE::nEstimationIters, depthData, idxPixel,
+				#if DENSE_NCC == DENSE_NCC_WEIGHTED
+				weightMap0,
+				#else
+				imageSum0,
+				#endif
+				viewsIDMap0,
+				coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
 		FOREACH(i, threads)
 			threads[i].start(EndDepthMapTmp, &estimators[i]);

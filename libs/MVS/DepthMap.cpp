@@ -324,8 +324,8 @@ bool DepthEstimator::FillPixelPatch()
 	const float mean(GetImage0Sum(x0)/nTexels);
 	normSq0 = 0;
 	float* pTexel0 = texels0.data();
-	for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; ++i)
-		for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; ++j)
+	for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; i+=nSizeStep)
+		for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; j+=nSizeStep)
 			normSq0 += SQUARE(*pTexel0++ = image0.image(x0.y+i, x0.x+j)-mean);
 	#else
 	Weight& w = weightMap0[x0.y*image0.image.width()+x0.x];
@@ -333,8 +333,8 @@ bool DepthEstimator::FillPixelPatch()
 		w.sumWeights = 0;
 		int n = 0;
 		const float colCenter = image0.image(x0);
-		for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; ++i) {
-			for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; ++j) {
+		for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; i+=nSizeStep) {
+			for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; j+=nSizeStep) {
 				Weight::Pixel& pw = w.weights[n++];
 				w.normSq0 +=
 					(pw.tempWeight = image0.image(x0.y+i, x0.x+j)) *
@@ -364,10 +364,11 @@ bool DepthEstimator::FillPixelPatch()
 float DepthEstimator::ScorePixelImage(const ViewData& image1, Depth depth, const Normal& normal)
 {
 	// center a patch of given size on the segment and fetch the pixel values in the target image
-	const Matrix3x3f H(ComputeHomographyMatrix(image1, depth, normal));
+	Matrix3x3f H(ComputeHomographyMatrix(image1, depth, normal));
 	Point3f X;
 	ProjectVertex_3x3_2_3(H.val, Point2f(float(x0.x-nSizeHalfWindow),float(x0.y-nSizeHalfWindow)).ptr(), X.ptr());
 	Point3f baseX(X);
+	H *= float(nSizeStep);
 	int n(0);
 	float sum(0);
 	#if DENSE_NCC != DENSE_NCC_DEFAULT
@@ -376,8 +377,8 @@ float DepthEstimator::ScorePixelImage(const ViewData& image1, Depth depth, const
 	#if DENSE_NCC == DENSE_NCC_WEIGHTED
 	const Weight& w = weightMap0[x0.y*image0.image.width()+x0.x];
 	#endif
-	for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; ++i) {
-		for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; ++j) {
+	for (int i=-nSizeHalfWindow; i<=nSizeHalfWindow; i+=nSizeStep) {
+		for (int j=-nSizeHalfWindow; j<=nSizeHalfWindow; j+=nSizeStep) {
 			const Point2f pt(X);
 			if (!image1.view.image.isInsideWithBorder<float,1>(pt))
 				return thRobust;

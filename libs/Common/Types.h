@@ -598,15 +598,15 @@ namespace SEACAVE {
 // F U N C T I O N S ///////////////////////////////////////////////
 
 template<typename T>
-inline T& NEGATE(T& a) {
+constexpr T& NEGATE(T& a) {
 	return (a = -a);
 }
 template<typename T>
-inline T SQUARE(const T& a) {
+constexpr T SQUARE(const T& a) {
 	return (a * a);
 }
 template<typename T>
-inline T CUBE(const T& a) {
+constexpr T CUBE(const T& a) {
 	return (a * a * a);
 }
 template<typename T>
@@ -626,7 +626,7 @@ inline T LOG10(const T& a) {
 	return T(log10(a));
 }
 template<typename T>
-inline T powi(T base, int exp) {
+constexpr T powi(T base, int exp) {
 	T result(1);
 	while (exp) {
 		if (exp & 1)
@@ -636,7 +636,7 @@ inline T powi(T base, int exp) {
 	}
 	return result;
 }
-inline int log2i(int val) {
+constexpr int log2i(int val) {
 	int ret = -1;
 	while (val > 0) {
 		val >>= 1;
@@ -654,14 +654,14 @@ inline T arithmeticSeries(T n, T a1=1, T d=1) {
 	return (n*(a1*2+(n-1)*d))/2;
 }
 template<typename T>
-inline T factorial(T n) {
+constexpr T factorial(T n) {
 	T ret = 1;
 	while (n > 1)
 		ret *= n--;
 	return ret;
 }
 template<typename T>
-inline T combinations(const T& n, const T& k) {
+constexpr T combinations(const T& n, const T& k) {
 	ASSERT(n >= k);
 	#if 1
 	T num = n;

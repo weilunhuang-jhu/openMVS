@@ -203,10 +203,11 @@ typedef MVS_API CLISTDEFIDX(DepthData,IIndex) DepthDataArr;
 
 
 struct MVS_API DepthEstimator {
-	enum { TexelChannels = 1 };
-	enum { nSizeHalfWindow = 3 };
+	enum { nSizeHalfWindow = 5 };
 	enum { nSizeWindow = nSizeHalfWindow*2+1 };
-	enum { nTexels = nSizeWindow*nSizeWindow*TexelChannels };
+	enum { nSizeStep = 2 };
+	enum { TexelChannels = 1 };
+	enum { nTexels = SQUARE((nSizeHalfWindow*2+nSizeStep)/nSizeStep)*TexelChannels };
 	enum { nMaxNeighbors = 8 };
 
 	typedef TPoint2<uint16_t> MapRef;

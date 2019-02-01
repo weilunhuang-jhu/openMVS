@@ -574,7 +574,7 @@ void* STCALL DepthMapsData::ScoreDepthMapTmp(void* arg)
 			// replace invalid normal with random values
 			normal = DepthEstimator::RandomNormal(viewDir);
 		}
-		estimator.confMap0(x) = DepthEstimator::EncodeScoreScale(estimator.ScorePixel(depth, normal, estimator.viewsIDMap0(x)));
+		estimator.confMap0(x) = DepthEstimator::EncodeScoreScale(estimator.ScorePixel(depth, normal));
 	}
 	return NULL;
 }
@@ -612,7 +612,17 @@ void* STCALL DepthMapsData::EndDepthMapTmp(void* arg)
 			#if 1
 			FOREACH(i, estimator.images)
 				estimator.scores[i] = ComputeAngle<REAL,float>(estimator.image0.camera.TransformPointI2W(Point3(x,depth)).ptr(), estimator.image0.camera.C.ptr(), estimator.images[i].view.camera.C.ptr());
+			#ifdef DENSE_ACPMH
 			const float fCosAngle(estimator.scores.size() > 1 ? estimator.scores.GetNth(1) : estimator.scores.front());
+			#else
+			#if DENSE_AGGNCC == DENSE_AGGNCC_NTH
+			const float fCosAngle(estimator.scores.size() > 1 ? estimator.scores.GetNth(estimator.idxScore) : estimator.scores.front());
+			#elif DENSE_AGGNCC == DENSE_AGGNCC_MEAN
+			const float fCosAngle(estimator.scores.mean());
+			#else
+			const float fCosAngle(estimator.scores.minCoeff());
+			#endif
+			#endif
 			const float wAngle(MINF(POW(ACOS(fCosAngle)/fOptimAngle,1.5f),1.f));
 			#else
 			const float wAngle(1.f);
@@ -703,10 +713,16 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 	if (prevDepthMapSize != size) {
 		prevDepthMapSize = size;
 		BitMatrix mask;
+		#ifdef DENSE_ACPMH
 		DepthEstimator::MapMatrix2CheckerboardIdx(size, coords, mask);
+		#else
+		DepthEstimator::MapMatrix2ZigzagIdx(size, coords, mask, MAXF(64,(int)nMaxThreads*8));
+		#endif
 	}
+	#ifdef DENSE_ACPMH
 	ViewsIDMap viewsIDMap0(size);
 	viewsIDMap0.memset(255);
+	#endif
 
 	// init threads
 	ASSERT(nMaxThreads > 0);
@@ -729,7 +745,11 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 				#else
 				imageSum0,
 				#endif
+				#ifdef DENSE_ACPMH
 				viewsIDMap0,
+				#else
+				DepthEstimator::RB2LT,
+				#endif
 				coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
 		FOREACH(i, threads)
@@ -752,6 +772,9 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 	// run propagation and random refinement cycles on the reference data
 	for (unsigned iter=0; iter<OPTDENSE::nEstimationIters; ++iter) {
 		// create working threads
+		#ifndef DENSE_ACPMH
+		const DepthEstimator::ENDIRECTION dir((DepthEstimator::ENDIRECTION)(iter%DepthEstimator::DIRS));
+		#endif
 		idxPixel = -1;
 		ASSERT(estimators.IsEmpty());
 		while (estimators.GetSize() < nMaxThreads)
@@ -761,7 +784,11 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 				#else
 				imageSum0,
 				#endif
+				#ifdef DENSE_ACPMH
 				viewsIDMap0,
+				#else
+				dir,
+				#endif
 				coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
 		FOREACH(i, threads)
@@ -794,7 +821,11 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 				#else
 				imageSum0,
 				#endif
+				#ifdef DENSE_ACPMH
 				viewsIDMap0,
+				#else
+				DepthEstimator::DIRS,
+				#endif
 				coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
 		FOREACH(i, threads)

@@ -47,6 +47,15 @@
 #define DENSE_NCC_WEIGHTED 2
 #define DENSE_NCC DENSE_NCC_WEIGHTED
 
+// NCC score aggregation type used during depth-map estimation
+#define DENSE_AGGNCC_NTH 0
+#define DENSE_AGGNCC_MEAN 1
+#define DENSE_AGGNCC_MIN 2
+#define DENSE_AGGNCC DENSE_AGGNCC_MEAN
+
+// uncomment to enable Asymmetric CheckerboardPropagation and Multi-Hypothesis Joint View Selection depth-map estimation
+#define DENSE_ACPMH
+
 // uncomment to enable smoothness used during depth-map estimation
 //#define DENSE_SMOOTHNESS
 
@@ -210,6 +219,14 @@ struct MVS_API DepthEstimator {
 	enum { nTexels = SQUARE((nSizeHalfWindow*2+nSizeStep)/nSizeStep)*TexelChannels };
 	enum { nMaxNeighbors = 8 };
 
+	#ifndef DENSE_ACPMH
+	enum ENDIRECTION {
+		LT2RB = 0,
+		RB2LT,
+		DIRS
+	};
+	#endif
+
 	typedef TPoint2<uint16_t> MapRef;
 	typedef CLISTDEF0(MapRef) MapRefArr;
 	typedef CLISTDEF0IDX(ImageRef,unsigned) DirSamples;
@@ -246,7 +263,11 @@ struct MVS_API DepthEstimator {
 	};
 
 	volatile Thread::safe_t& idxPixel; // current image index to be processed
+	#if defined(DENSE_ACPMH) || !defined(DENSE_SMOOTHNESS)
 	CLISTDEF0IDX(NeighborData,IIndex) neighbors; // neighbor pixels coordinates to be processed
+	#else
+	CLISTDEF0IDX(ImageRef,IIndex) neighbors; // neighbor pixels coordinates to be processed
+	#endif
 	#ifdef DENSE_SMOOTHNESS
 	CLISTDEF0IDX(NeighborEstimate,IIndex) neighborsClose; // close neighbor pixel depths to be used for smoothing
 	#endif
@@ -259,11 +280,17 @@ struct MVS_API DepthEstimator {
 	#if DENSE_NCC == DENSE_NCC_DEFAULT
 	TexelVec texels1;
 	#endif
+	#if defined(DENSE_ACPMH) || DENSE_AGGNCC == DENSE_AGGNCC_NTH
 	FloatArr scores;
+	#else
+	Eigen::VectorXf scores;
+	#endif
 	DepthMap& depthMap0;
 	NormalMap& normalMap0;
 	ConfidenceMap& confMap0;
+	#ifdef DENSE_ACPMH
 	ViewsIDMap& viewsIDMap0;
+	#endif
 	#if DENSE_NCC == DENSE_NCC_WEIGHTED
 	WeightMap& weightMap0;
 	#endif
@@ -277,13 +304,18 @@ struct MVS_API DepthEstimator {
 	const MapRefArr& coords;
 	const Image8U::Size size;
 	const Depth dMin, dMax;
+	#ifndef DENSE_ACPMH
+	const ENDIRECTION dir;
+	#if DENSE_AGGNCC == DENSE_AGGNCC_NTH
+	const IDX idxScore;
+	#endif
+	#endif
 
+	#ifdef DENSE_ACPMH
 	Eigen::MatrixXf M;
 	CLISTDEF0IDX(float,IIndex) S;
 	CLISTDEF0IDX(uint8_t,IIndex) O;
-
-	static const std::array<const DirSamples,8> dirs;
-	static const std::array<float,5> mweights;
+	#endif
 
 	DepthEstimator(
 		unsigned nIter, DepthData& _depthData0, volatile Thread::safe_t& _idx,
@@ -292,13 +324,20 @@ struct MVS_API DepthEstimator {
 		#else
 		const Image64F& _image0Sum,
 		#endif
+		#ifdef DENSE_ACPMH
 		ViewsIDMap& _viewsIDMap0,
+		#else
+		ENDIRECTION _dir,
+		#endif
 		const MapRefArr& _coords);
 
 	bool PreparePixelPatch(const ImageRef&);
 	bool FillPixelPatch();
 	float ScorePixelImage(const ViewData& image1, Depth, const Normal&);
+	#ifdef DENSE_ACPMH
 	float ScorePixel(Depth, const Normal&, const ViewsID&);
+	#endif
+	float ScorePixel(Depth, const Normal&);
 	void ProcessPixel(IDX idx);
 	
 	#if DENSE_NCC != DENSE_NCC_WEIGHTED
@@ -407,7 +446,11 @@ struct MVS_API DepthEstimator {
 		ASSERT(ISEQUAL(norm(d), TR(1)));
 	}
 
+	#ifndef DENSE_ACPMH
+	static void MapMatrix2ZigzagIdx(const Image8U::Size& size, DepthEstimator::MapRefArr& coords, BitMatrix& mask, int rawStride=16);
+	#else
 	static void MapMatrix2CheckerboardIdx(const Image8U::Size& size, MapRefArr& coords, const BitMatrix& mask, int step=1);
+	#endif
 
 	const float smoothBonusDepth, smoothBonusNormal;
 	const float smoothSigmaDepth, smoothSigmaNormal;
@@ -415,8 +458,12 @@ struct MVS_API DepthEstimator {
 	const float angle1Range, angle2Range;
 	const float thConfSmall, thConfBig;
 	const float thRobust;
+	#ifdef DENSE_ACPMH
 	const float thMc;
 	const unsigned thN1, thN2 ,thK;
+	static const std::array<const DirSamples,8> dirs;
+	static const std::array<float,5> mweights;
+	#endif
 	static const float scaleRanges[12];
 };
 /*----------------------------------------------------------------*/

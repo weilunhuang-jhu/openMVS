@@ -1607,7 +1607,7 @@ bool Scene::DenseReconstruction()
 				data.images.Insert(idxImage);
 			}
 			// reload image at the appropriate resolution
-			const unsigned nMaxResolution(imageData.RecomputeMaxResolution(OPTDENSE::nResolutionLevel, OPTDENSE::nMinResolution));
+			const unsigned nMaxResolution(imageData.RecomputeMaxResolution(OPTDENSE::nResolutionLevel, OPTDENSE::nMinResolution, OPTDENSE::nMaxResolution));
 			if (!imageData.ReloadImage(nMaxResolution)) {
 				#ifdef DENSE_USE_OPENMP
 				bAbort = true;

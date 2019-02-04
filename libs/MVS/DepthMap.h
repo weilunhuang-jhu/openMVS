@@ -81,8 +81,9 @@ enum DepthFlags {
 	ADJUST_FILTER	= (1 << 2),
 	OPTIMIZE		= (REMOVE_SPECKLES|FILL_GAPS)
 };
-extern unsigned nMinResolution;
 extern unsigned nResolutionLevel;
+extern unsigned nMaxResolution;
+extern unsigned nMinResolution;
 extern unsigned nMinViews;
 extern unsigned nMaxViews;
 extern unsigned nMinViewsFuse;

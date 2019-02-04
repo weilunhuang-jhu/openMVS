@@ -318,13 +318,16 @@ DepthEstimator::DepthEstimator(
 	#endif
 	const MapRefArr& _coords)
 	:
+	#ifndef _RELEASE
+	rnd(SEACAVE::Random::default_seed),
+	#endif
+	idxPixel(_idx),
 	neighbors(0,nMaxNeighbors),
 	#ifdef DENSE_SMOOTHNESS
 	neighborsClose(0,4),
 	#endif
 	#ifdef DENSE_ACPMH
 	#endif
-	idxPixel(_idx),
 	scores(_depthData0.images.size()-1),
 	depthMap0(_depthData0.depthMap), normalMap0(_depthData0.normalMap), confMap0(_depthData0.confMap),
 	#ifdef DENSE_ACPMH
@@ -691,10 +694,10 @@ void DepthEstimator::ProcessPixel(IDX idx)
 		Normal2Dir(normal, p);
 		Normal nnormal;
 		for (unsigned iter=invScaleRange; iter<OPTDENSE::nRandomIters; ++iter) {
-			const Depth ndepth(randomMeanRange(depth, depthRange*scaleRange));
+			const Depth ndepth(rnd.randomMeanRange(depth, depthRange*scaleRange));
 			if (!ISINSIDE(ndepth, dMin, dMax))
 				continue;
-			const Point2f np(randomMeanRange(p.x, angle1Range*scaleRange), randomMeanRange(p.y, angle2Range*scaleRange));
+			const Point2f np(rnd.randomMeanRange(p.x, angle1Range*scaleRange), rnd.randomMeanRange(p.y, angle2Range*scaleRange));
 			Dir2Normal(np, nnormal);
 			if (nnormal.dot(viewDir) >= 0)
 				continue;
@@ -857,10 +860,10 @@ void DepthEstimator::ProcessPixel(IDX idx)
 		Normal2Dir(normal, p);
 		Normal nnormal;
 		for (unsigned iter=invScaleRange; iter<OPTDENSE::nRandomIters; ++iter) {
-			const Depth ndepth(randomMeanRange(depth, depthRange*scaleRange));
+			const Depth ndepth(rnd.randomMeanRange(depth, depthRange*scaleRange));
 			if (!ISINSIDE(ndepth, dMin, dMax))
 				continue;
-			const Point2f np(randomMeanRange(p.x, angle1Range*scaleRange), randomMeanRange(p.y, angle2Range*scaleRange));
+			const Point2f np(rnd.randomMeanRange(p.x, angle1Range*scaleRange), rnd.randomMeanRange(p.y, angle2Range*scaleRange));
 			Dir2Normal(np, nnormal);
 			if (nnormal.dot(viewDir) >= 0)
 				continue;

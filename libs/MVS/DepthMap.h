@@ -263,6 +263,8 @@ struct MVS_API DepthEstimator {
 			Hr(image0.camera.K.inv()) {}
 	};
 
+	SEACAVE::Random rnd;
+
 	volatile Thread::safe_t& idxPixel; // current image index to be processed
 	#if defined(DENSE_ACPMH) || !defined(DENSE_SMOOTHNESS)
 	CLISTDEF0IDX(NeighborData,IIndex) neighbors; // neighbor pixels coordinates to be processed
@@ -392,13 +394,13 @@ struct MVS_API DepthEstimator {
 	}
 
 	// generate random depth and normal
-	static inline Depth RandomDepth(Depth dMin, Depth dMax) {
+	inline Depth RandomDepth(Depth dMin, Depth dMax) {
 		ASSERT(dMin > 0);
-		return randomRange(dMin, dMax);
+		return rnd.randomRange(dMin, dMax);
 	}
-	static inline Normal RandomNormal(const Point3f& viewRay) {
+	inline Normal RandomNormal(const Point3f& viewRay) {
 		Normal normal;
-		Dir2Normal(Point2f(randomRange(FD2R(0.f),FD2R(360.f)), randomRange(FD2R(120.f),FD2R(180.f))), normal);
+		Dir2Normal(Point2f(rnd.randomRange(FD2R(0.f),FD2R(360.f)), rnd.randomRange(FD2R(120.f),FD2R(180.f))), normal);
 		return normal.dot(viewRay) > 0 ? -normal : normal;
 	}
 

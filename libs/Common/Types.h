@@ -337,7 +337,7 @@ inline T MAXF3(const T& x1, const T& x2, const T& x3) {
 #define RAND			std::rand
 #endif
 template<typename T>
-FORCEINLINE T RANDOM() { return (T(1)/RAND_MAX)*RAND(); }
+FORCEINLINE T RANDOM() { return T(RAND())/RAND_MAX; }
 
 template<typename T1, typename T2>
 union TAliasCast
@@ -839,66 +839,6 @@ FORCEINLINE int Round2Int(double x) {
 /*----------------------------------------------------------------*/
 
 
-// Random number generation
-// uniform random number generation
-FORCEINLINE float random() {
-	return RANDOM<float>();
-}
-FORCEINLINE double randomd() {
-	return RANDOM<double>();
-}
-template<typename T>
-FORCEINLINE T randomRange(T nMin, T nMax) {
-	return nMin + ((nMax - nMin) * RAND())/RAND_MAX;
-}
-template<>
-FORCEINLINE float randomRange<float>(float fMin, float fMax) {
-	return fMin + (fMax - fMin) * random();
-}
-template<>
-FORCEINLINE double randomRange<double>(double fMin, double fMax) {
-	return fMin + (fMax - fMin) * randomd();
-}
-template<typename T>
-FORCEINLINE T randomMeanRange(T mean, T delta/*=(max-min)/2*/) {
-	return mean-delta + (delta*T(2) * RAND())/RAND_MAX;
-}
-template<>
-FORCEINLINE float randomMeanRange<float>(float mean, float delta/*=(max-min)/2*/) {
-	return mean + delta * (2.f * random() - 1.f);
-}
-template<>
-FORCEINLINE double randomMeanRange<double>(double mean, double delta/*=(max-min)/2*/) {
-	return mean + delta * (2.0 * randomd() - 1.0);
-}
-// gaussian random number generation
-template<typename T>
-FORCEINLINE T gaussian(T val, T sigma) {
-	return EXP(-SQUARE(val/sigma)/2)/(SQRT(T(M_PI*2))*sigma);
-}
-template<typename T>
-FORCEINLINE T randomGaussian(T mean, T sigma) {
-	T x, y, r2;
-	do {
-		x = T(-1) + T(2) * RANDOM<T>();
-		y = T(-1) + T(2) * RANDOM<T>();
-		r2 = x * x + y * y;
-	} while (r2 > T(1) || r2 == T(0));
-	return mean + sigma * y * SQRT(T(-2) * LOGN(r2) / r2);
-}
-template<typename T>
-FORCEINLINE T randomGaussian(T sigma) {
-	return randomGaussian(T(0), sigma);
-}
-FORCEINLINE float randomGaussian() {
-	return randomGaussian(0.f, 1.f);
-}
-FORCEINLINE double randomGaussiand() {
-	return randomGaussian(0.0, 1.0);
-}
-/*----------------------------------------------------------------*/
-
-
 // INTERPOLATION
 
 // Linear interpolation
@@ -1173,6 +1113,7 @@ inline _Tp    SAFEDIVIDE(_Tp   x, _Tp   y)	{ return (y==_Tp(0) ? INVZERO(y) : x/
 } // namespace SEACAVE
 
 
+#include "Random.h"
 #include "HalfFloat.h"
 
 

@@ -342,7 +342,8 @@ struct MVS_API DepthEstimator {
 	#endif
 	float ScorePixel(Depth, const Normal&);
 	void ProcessPixel(IDX idx);
-	
+	Depth InterpolatePixel(const ImageRef&, Depth, const Normal&) const;
+
 	#if DENSE_NCC != DENSE_NCC_WEIGHTED
 	inline float GetImage0Sum(const ImageRef& p) const {
 		const ImageRef p0(p.x-nSizeHalfWindow, p.y-nSizeHalfWindow);

@@ -70,7 +70,7 @@ DEFVAR_OPTDENSE_uint32(nMinViewsFuse, "Min Views Fuse", "minimum number of image
 DEFVAR_OPTDENSE_uint32(nMinViewsFilter, "Min Views Filter", "minimum number of images that agrees with an estimate in order to consider it inlier", "2")
 MDEFVAR_OPTDENSE_uint32(nMinViewsFilterAdjust, "Min Views Filter Adjust", "minimum number of images that agrees with an estimate in order to consider it inlier (0 - disabled)", "1")
 MDEFVAR_OPTDENSE_uint32(nMinViewsTrustPoint, "Min Views Trust Point", "min-number of views so that the point is considered for approximating the depth-maps (<2 - random initialization)", "2")
-MDEFVAR_OPTDENSE_uint32(nNumViews, "Num Views", "Number of views used for depth-map estimation (0 - all views available)", "1", "0")
+MDEFVAR_OPTDENSE_uint32(nNumViews, "Num Views", "Number of views used for depth-map estimation (0 - all views available)", "0", "1", "4")
 MDEFVAR_OPTDENSE_bool(bFilterAdjust, "Filter Adjust", "adjust depth estimates during filtering", "1")
 MDEFVAR_OPTDENSE_bool(bAddCorners, "Add Corners", "add support points at image corners with nearest neighbor disparities", "1")
 MDEFVAR_OPTDENSE_float(fViewMinScore, "View Min Score", "Min score to consider a neighbor images (0 - disabled)", "2.0")
@@ -822,24 +822,28 @@ void DepthEstimator::ProcessPixel(IDX idx)
 		// check if any of the neighbor estimates are better then the current estimate
 		#ifdef DENSE_SMOOTHNESS
 		FOREACH(n, neighbors) {
-			float nconf(confMap0(neighbors[n]));
+			const ImageRef& nx = neighbors[n];
 		#else
-		for (const NeighborData& neighbor: neighbors) {
-			float nconf(confMap0(neighbor.x));
+		for (NeighborData& neighbor: neighbors) {
+			const ImageRef& nx = neighbor.x;
 		#endif
+			float nconf(confMap0(nx));
 			const unsigned ninvScaleRange(DecodeScoreScale(nconf));
 			if (nconf >= OPTDENSE::fNCCThresholdKeep)
 				continue;
 			#ifdef DENSE_SMOOTHNESS
-			const NeighborEstimate& neighbor = neighborsClose[n];
+			NeighborEstimate& neighbor = neighborsClose[n];
+			#endif
+			#if 1 // should propagate faster the neighbors, but for some reason it also clusters them
+			neighbor.depth = InterpolatePixel(nx, neighbor.depth, neighbor.normal);
 			#endif
 			ASSERT(neighbor.depth > 0);
 			if (neighbor.normal.dot(viewDir) >= 0)
 				continue;
-			const float newconf(ScorePixel(neighbor.depth, neighbor.normal));
-			ASSERT(newconf >= 0 && newconf <= 2);
-			if (conf > newconf) {
-				conf = newconf;
+			nconf = ScorePixel(neighbor.depth, neighbor.normal);
+			ASSERT(nconf >= 0 && nconf <= 2);
+			if (conf > nconf) {
+				conf = nconf;
 				depth = neighbor.depth;
 				normal = neighbor.normal;
 				invScaleRange = (ninvScaleRange>1 ? ninvScaleRange-1 : ninvScaleRange);
@@ -882,6 +886,62 @@ void DepthEstimator::ProcessPixel(IDX idx)
 	conf = EncodeScoreScale(conf, invScaleRange);
 }
 #endif
+
+// interpolate given pixel's estimate to the current position
+Depth DepthEstimator::InterpolatePixel(const ImageRef& nx, Depth depth, const Normal& normal) const
+{
+	ASSERT(depth > 0 && normal.dot(image0.camera.TransformPointI2C(Cast<REAL>(nx))) < 0);
+	#if 0 || defined(DENSE_ACPMH)
+	#if 0
+	const Plane plane(Cast<REAL>(normal), image0.camera.TransformPointI2C(Point3(nx, depth)));
+	const Ray3 ray(Point3::ZERO, normalized(X0));
+	const Depth depthNew((Depth)ray.Intersects(plane).z());
+	#else
+	const Point3 planeN(normal);
+	const REAL planeD(planeN.dot(image0.camera.TransformPointI2C(Point3(nx, depth))));
+	const Depth depthNew((Depth)(planeD / planeN.dot(static_cast<const Point3&>(X0))));
+	#endif
+	#else
+	#if 1
+	// compute as intersection of the lines
+	// {(x1, y1), (x2, y2)} from neighbor's 3D point towards normal direction
+	// and
+	// {(0, 0), (x4, 1)} from camera center towards current pixel direction
+	// in the x or y plane
+	Depth depthNew;
+	if (x0.x == nx.x) {
+		const float fy = (float)image0.camera.K[4];
+		const float cy = (float)image0.camera.K[5];
+		const float x1 = depth * (nx.y - cy) / fy;
+		const float y1 = depth;
+		const float x4 = (x0.y - cy) / fy;
+		const float denom = normal.z + x4 * normal.y;
+		if (ISZERO(denom))
+			return depth;
+		const float x2 = x1 + normal.z;
+		const float y2 = y1 - normal.y;
+		const float nom = y1 * x2 - x1 * y2;
+		depthNew = nom / denom;
+	} else {
+		ASSERT(x0.y == nx.y);
+		const float fx = (float)image0.camera.K[0];
+		const float cx = (float)image0.camera.K[2];
+		ASSERT(image0.camera.K[1] == 0);
+		const float x1 = depth * (nx.x - cx) / fx;
+		const float y1 = depth;
+		const float x4 = (x0.x - cx) / fx;
+		const float denom = normal.z + x4 * normal.x;
+		if (ISZERO(denom))
+			return depth;
+		const float x2 = x1 + normal.z;
+		const float y2 = y1 - normal.x;
+		const float nom = y1 * x2 - x1 * y2;
+		depthNew = nom / denom;
+	}
+	#endif
+	#endif
+	return ISINSIDE(depthNew,dMin,dMax) ? depthNew : depth;
+}
 /*----------------------------------------------------------------*/
 
 

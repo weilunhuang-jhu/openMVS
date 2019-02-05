@@ -53,11 +53,14 @@
 #define DENSE_AGGNCC_MIN 2
 #define DENSE_AGGNCC DENSE_AGGNCC_MEAN
 
+// type of smoothness used during depth-map estimation
+#define DENSE_SMOOTHNESS_NA 0
+#define DENSE_SMOOTHNESS_FAST 1
+#define DENSE_SMOOTHNESS_PLANE 2
+#define DENSE_SMOOTHNESS DENSE_SMOOTHNESS_PLANE
+
 // uncomment to enable Asymmetric CheckerboardPropagation and Multi-Hypothesis Joint View Selection depth-map estimation
 #define DENSE_ACPMH
-
-// uncomment to enable smoothness used during depth-map estimation
-//#define DENSE_SMOOTHNESS
 
 #define ComposeDepthFilePathBase(b, i, e) MAKE_PATH(String::FormatString((b + "%04u." e).c_str(), i))
 #define ComposeDepthFilePath(i, e) MAKE_PATH(String::FormatString("depth%04u." e, i))
@@ -238,10 +241,13 @@ struct MVS_API DepthEstimator {
 		Depth depth;
 		Normal normal;
 	};
-	#ifdef DENSE_SMOOTHNESS
+	#if DENSE_SMOOTHNESS != DENSE_SMOOTHNESS_NA
 	struct NeighborEstimate {
 		Depth depth;
 		Normal normal;
+		#if DENSE_SMOOTHNESS == DENSE_SMOOTHNESS_PLANE
+		Planef::POINT X;
+		#endif
 	};
 	#endif
 
@@ -266,12 +272,12 @@ struct MVS_API DepthEstimator {
 	SEACAVE::Random rnd;
 
 	volatile Thread::safe_t& idxPixel; // current image index to be processed
-	#if defined(DENSE_ACPMH) || !defined(DENSE_SMOOTHNESS)
+	#if defined(DENSE_ACPMH) || DENSE_SMOOTHNESS == DENSE_SMOOTHNESS_NA
 	CLISTDEF0IDX(NeighborData,IIndex) neighbors; // neighbor pixels coordinates to be processed
 	#else
 	CLISTDEF0IDX(ImageRef,IIndex) neighbors; // neighbor pixels coordinates to be processed
 	#endif
-	#ifdef DENSE_SMOOTHNESS
+	#if DENSE_SMOOTHNESS != DENSE_SMOOTHNESS_NA
 	CLISTDEF0IDX(NeighborEstimate,IIndex) neighborsClose; // close neighbor pixel depths to be used for smoothing
 	#endif
 	Vec3 X0;	      //
@@ -287,6 +293,9 @@ struct MVS_API DepthEstimator {
 	FloatArr scores;
 	#else
 	Eigen::VectorXf scores;
+	#endif
+	#if DENSE_SMOOTHNESS == DENSE_SMOOTHNESS_PLANE
+	Planef plane; // plane defined by current depth and normal estimate
 	#endif
 	DepthMap& depthMap0;
 	NormalMap& normalMap0;
@@ -336,6 +345,9 @@ struct MVS_API DepthEstimator {
 
 	bool PreparePixelPatch(const ImageRef&);
 	bool FillPixelPatch();
+	#if DENSE_SMOOTHNESS == DENSE_SMOOTHNESS_PLANE
+	void InitPlane(Depth, const Normal&);
+	#endif
 	float ScorePixelImage(const ViewData& image1, Depth, const Normal&);
 	#ifdef DENSE_ACPMH
 	float ScorePixel(Depth, const Normal&, const ViewsID&);

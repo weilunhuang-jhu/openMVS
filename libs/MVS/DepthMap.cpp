@@ -604,11 +604,7 @@ void DepthEstimator::ProcessPixel(IDX idx)
 		FOREACH(idxNeigh, neighbors) {
 			const NeighborData& neighbor = neighbors[idxNeigh];
 			ASSERT(neighbor.depth > 0);
-			#if 0 // should propagate faster the neighbors, but for some reason it also clusters them
 			const Depth ndepth(InterpolatePixel(neighbor.x, neighbor.depth, neighbor.normal));
-			#else
-			const Depth ndepth(neighbor.depth);
-			#endif
 			FOREACH(idxView, images)
 				M(idxNeigh, idxView) = ScorePixelImage(images[idxView], ndepth, neighbor.normal);
 		}
@@ -834,9 +830,7 @@ void DepthEstimator::ProcessPixel(IDX idx)
 			#ifdef DENSE_SMOOTHNESS
 			NeighborEstimate& neighbor = neighborsClose[n];
 			#endif
-			#if 1 // should propagate faster the neighbors, but for some reason it also clusters them
 			neighbor.depth = InterpolatePixel(nx, neighbor.depth, neighbor.normal);
-			#endif
 			ASSERT(neighbor.depth > 0);
 			if (neighbor.normal.dot(viewDir) >= 0)
 				continue;
@@ -891,24 +885,13 @@ void DepthEstimator::ProcessPixel(IDX idx)
 Depth DepthEstimator::InterpolatePixel(const ImageRef& nx, Depth depth, const Normal& normal) const
 {
 	ASSERT(depth > 0 && normal.dot(image0.camera.TransformPointI2C(Cast<REAL>(nx))) < 0);
-	#if 0 || defined(DENSE_ACPMH)
-	#if 0
-	const Plane plane(Cast<REAL>(normal), image0.camera.TransformPointI2C(Point3(nx, depth)));
-	const Ray3 ray(Point3::ZERO, normalized(X0));
-	const Depth depthNew((Depth)ray.Intersects(plane).z());
-	#else
-	const Point3 planeN(normal);
-	const REAL planeD(planeN.dot(image0.camera.TransformPointI2C(Point3(nx, depth))));
-	const Depth depthNew((Depth)(planeD / planeN.dot(static_cast<const Point3&>(X0))));
-	#endif
-	#else
+	Depth depthNew;
 	#if 1
 	// compute as intersection of the lines
 	// {(x1, y1), (x2, y2)} from neighbor's 3D point towards normal direction
 	// and
 	// {(0, 0), (x4, 1)} from camera center towards current pixel direction
 	// in the x or y plane
-	Depth depthNew;
 	if (x0.x == nx.x) {
 		const float fy = (float)image0.camera.K[4];
 		const float cy = (float)image0.camera.K[5];
@@ -922,8 +905,13 @@ Depth DepthEstimator::InterpolatePixel(const ImageRef& nx, Depth depth, const No
 		const float y2 = y1 - normal.y;
 		const float nom = y1 * x2 - x1 * y2;
 		depthNew = nom / denom;
-	} else {
+	}
+	#ifndef DENSE_ACPMH
+	else {
 		ASSERT(x0.y == nx.y);
+	#else
+	if (x0.y == nx.y) {
+	#endif
 		const float fx = (float)image0.camera.K[0];
 		const float cx = (float)image0.camera.K[2];
 		ASSERT(image0.camera.K[1] == 0);
@@ -938,7 +926,23 @@ Depth DepthEstimator::InterpolatePixel(const ImageRef& nx, Depth depth, const No
 		const float nom = y1 * x2 - x1 * y2;
 		depthNew = nom / denom;
 	}
+	#ifdef DENSE_ACPMH
+	else
 	#endif
+	#endif
+	#ifdef DENSE_ACPMH
+	// compute as the ray - plane intersection
+	{
+		#if 0
+		const Plane plane(Cast<REAL>(normal), image0.camera.TransformPointI2C(Point3(nx, depth)));
+		const Ray3 ray(Point3::ZERO, normalized(X0));
+		depthNew = (Depth)ray.Intersects(plane).z();
+		#else
+		const Point3 planeN(normal);
+		const REAL planeD(planeN.dot(image0.camera.TransformPointI2C(Point3(nx, depth))));
+		depthNew = (Depth)(planeD / planeN.dot(reinterpret_cast<const Point3&>(X0)));
+		#endif
+	}
 	#endif
 	return ISINSIDE(depthNew,dMin,dMax) ? depthNew : depth;
 }

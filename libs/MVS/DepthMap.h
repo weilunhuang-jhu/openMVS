@@ -59,6 +59,11 @@
 #define DENSE_SMOOTHNESS_PLANE 2
 #define DENSE_SMOOTHNESS DENSE_SMOOTHNESS_PLANE
 
+// exp function type used during depth estimation
+#define DENSE_EXP_DEFUALT EXP
+#define DENSE_EXP_FAST FEXP<true> // ~10% faster, but slightly less precise
+#define DENSE_EXP DENSE_EXP_DEFUALT
+
 // uncomment to enable Asymmetric CheckerboardPropagation and Multi-Hypothesis Joint View Selection depth-map estimation
 #define DENSE_ACPMH
 
@@ -374,7 +379,7 @@ struct MVS_API DepthEstimator {
 		// spatial weight [0..1]
 		const float sigmaSpatial(-1.f/(2.f*SQUARE((int)nSizeHalfWindow)));
 		const float wSpatial(float(SQUARE(x.x) + SQUARE(x.y)) * sigmaSpatial);
-		return EXP(wColor+wSpatial);
+		return DENSE_EXP(wColor+wSpatial);
 	}
 	#endif
 

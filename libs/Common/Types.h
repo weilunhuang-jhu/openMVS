@@ -675,6 +675,24 @@ constexpr T combinations(const T& n, const T& k) {
 	#endif
 }
 
+// adapted from https://github.com/whackashoe/fastapprox.git
+// (set bSafe to true if the values might be smaller than -126)
+template<bool bSafe>
+inline float FPOW2(float p) {
+	if (bSafe && p < -126.f) {
+		return 0.f;
+	} else {
+		ASSERT(p >= -126.f);
+		CastF2I v;
+		v.i = static_cast<int32_t>((1 << 23) * (p + 126.94269504f));
+		return v.f;
+	}
+}
+template<bool bSafe>
+inline float FEXP(float v) {
+	return FPOW2<bSafe>(1.44269504f * v);
+}
+
 // Inverse of the square root
 // Compute a fast 1 / sqrtf(v) approximation
 inline float RSQRT(float v) {

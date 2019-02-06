@@ -497,11 +497,11 @@ float DepthEstimator::ScorePixelImage(const ViewData& image1, Depth depth, const
 	// encourage smoothness
 	for (const NeighborEstimate& neighbor: neighborsClose) {
 		#if DENSE_SMOOTHNESS == DENSE_SMOOTHNESS_PLANE
-		score *= 1.f - smoothBonusDepth * EXP(SQUARE(plane.Distance(neighbor.X)/depth) * smoothSigmaDepth);
+		score *= 1.f - smoothBonusDepth * DENSE_EXP(SQUARE(plane.Distance(neighbor.X)/depth) * smoothSigmaDepth);
 		#else
-		score *= 1.f - smoothBonusDepth * EXP(SQUARE((depth-neighbor.depth)/depth) * smoothSigmaDepth);
+		score *= 1.f - smoothBonusDepth * DENSE_EXP(SQUARE((depth-neighbor.depth)/depth) * smoothSigmaDepth);
 		#endif
-		score *= 1.f - smoothBonusNormal * EXP(SQUARE(ACOS(ComputeAngle<float,float>(normal.ptr(), neighbor.normal.ptr()))) * smoothSigmaNormal);
+		score *= 1.f - smoothBonusNormal * DENSE_EXP(SQUARE(ACOS(ComputeAngle<float,float>(normal.ptr(), neighbor.normal.ptr()))) * smoothSigmaNormal);
 	}
 	#endif
 	return score;
@@ -642,7 +642,7 @@ void DepthEstimator::ProcessPixel(IDX idx)
 			if (n1 > thN1 && n2 < thN2) {
 				float avgC(0);
 				FOREACH(idxNeigh, neighbors) {
-					const float C(EXP(-SQUARE(M(idxNeigh, idxView))/(2.f*beta)));
+					const float C(DENSE_EXP(-SQUARE(M(idxNeigh, idxView))/(2.f*beta)));
 					avgC += C;
 				}
 				avgC /= (float)neighbors.size();

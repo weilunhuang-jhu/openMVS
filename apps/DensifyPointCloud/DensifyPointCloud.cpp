@@ -98,7 +98,7 @@ bool Initialize(size_t argc, LPCTSTR* argv)
 		("resolution-level", boost::program_options::value<unsigned>(&nResolutionLevel)->default_value(1), "how many times to scale down the images before point cloud computation")
 		("max-resolution", boost::program_options::value(&nMaxResolution)->default_value(3200), "do not scale images higher than this resolution")
 		("min-resolution", boost::program_options::value<unsigned>(&nMinResolution)->default_value(640), "do not scale images lower than this resolution")
-		("number-views", boost::program_options::value<unsigned>(&nNumViews)->default_value(0), "number of views used for depth-map estimation (0 - all neighbor views available)")
+		("number-views", boost::program_options::value<unsigned>(&nNumViews)->default_value(8), "number of views used for depth-map estimation (0 - all neighbor views available)")
 		("number-views-fuse", boost::program_options::value<unsigned>(&nMinViewsFuse)->default_value(3), "minimum number of images that agrees with an estimate during fusion in order to consider it inlier")
 		("estimate-colors", boost::program_options::value<unsigned>(&nEstimateColors)->default_value(1), "estimate the colors for the dense point-cloud")
 		("estimate-normals", boost::program_options::value<unsigned>(&nEstimateNormals)->default_value(0), "estimate the normals for the dense point-cloud")
@@ -163,6 +163,8 @@ bool Initialize(size_t argc, LPCTSTR* argv)
 		OPT::strOutputFileName = Util::getFileFullName(OPT::strInputFileName) + _T("_dense.mvs");
 
 	// init dense options
+	if (!Util::isFullPath(OPT::strDenseConfigFileName))
+		OPT::strDenseConfigFileName = MAKE_PATH(OPT::strDenseConfigFileName);
 	OPTDENSE::init();
 	const bool bValidConfig(OPTDENSE::oConfig.Load(OPT::strDenseConfigFileName));
 	OPTDENSE::update();

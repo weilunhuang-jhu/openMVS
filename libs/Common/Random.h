@@ -143,11 +143,11 @@ struct Random : std::mt19937 {
 
 	// returns a uniform random number in the range [nMin, nMax] using std implementation
 	template<typename T=result_type>
-	FORCEINLINE typename std::enable_if<std::is_floating_point<T>::value, T>::value randomUniform(T nMin, T nMax) {
+	FORCEINLINE typename std::enable_if<std::is_floating_point<T>::value, T>::type randomUniform(T nMin, T nMax) {
 		return std::uniform_real_distribution<T>(nMin, nMax)(*this);
 	}
 	template<typename T=result_type>
-	FORCEINLINE typename std::enable_if<std::is_integral<T>::value, T>::value randomUniform(T nMin, T nMax) {
+	FORCEINLINE typename std::enable_if<std::is_integral<T>::value, T>::type randomUniform(T nMin, T nMax) {
 		return std::uniform_int_distribution<T>(nMin, nMax)(*this);
 	}
 

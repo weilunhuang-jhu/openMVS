@@ -51,13 +51,18 @@
 #define DENSE_AGGNCC_NTH 0
 #define DENSE_AGGNCC_MEAN 1
 #define DENSE_AGGNCC_MIN 2
-#define DENSE_AGGNCC DENSE_AGGNCC_MEAN
+#define DENSE_AGGNCC DENSE_AGGNCC_MIN
 
 // type of smoothness used during depth-map estimation
 #define DENSE_SMOOTHNESS_NA 0
 #define DENSE_SMOOTHNESS_FAST 1
 #define DENSE_SMOOTHNESS_PLANE 2
-#define DENSE_SMOOTHNESS DENSE_SMOOTHNESS_PLANE
+#define DENSE_SMOOTHNESS DENSE_AGGNCC_NTH
+
+// type of refinement used during depth-map estimation
+#define DENSE_REFINE_ITER 0
+#define DENSE_REFINE_EXACT 1
+#define DENSE_REFINE DENSE_REFINE_ITER
 
 // exp function type used during depth estimation
 #define DENSE_EXP_DEFUALT EXP
@@ -255,6 +260,12 @@ struct MVS_API DepthEstimator {
 		#endif
 	};
 	#endif
+	#if DENSE_REFINE == DENSE_REFINE_EXACT
+	struct PixelEstimate {
+		Depth depth;
+		Normal normal;
+	};
+	#endif
 
 	#if DENSE_NCC == DENSE_NCC_WEIGHTED
 	typedef WeightedPatchFix<nTexels> Weight;
@@ -360,6 +371,9 @@ struct MVS_API DepthEstimator {
 	float ScorePixel(Depth, const Normal&);
 	void ProcessPixel(IDX idx);
 	Depth InterpolatePixel(const ImageRef&, Depth, const Normal&) const;
+	#if DENSE_REFINE == DENSE_REFINE_EXACT
+	PixelEstimate PerturbEstimate(const PixelEstimate&, float perturbation);
+	#endif
 
 	#if DENSE_NCC != DENSE_NCC_WEIGHTED
 	inline float GetImage0Sum(const ImageRef& p) const {
@@ -427,7 +441,7 @@ struct MVS_API DepthEstimator {
 		const Normal viewDir(Cast<float>(X0));
 		const float cosAngLen(normal.dot(viewDir));
 		if (cosAngLen >= 0)
-			normal = TRMatrixBase<float>(normal.cross(viewDir), MINF((ACOS(cosAngLen/norm(viewDir))-FD2R(90.f))*1.01f, -0.001f)) * normal;
+			normal = RMatrixBaseF(normal.cross(viewDir), MINF((ACOS(cosAngLen/norm(viewDir))-FD2R(90.f))*1.01f, -0.001f)) * normal;
 	}
 
 	// encode/decode NCC score and refinement level in one float
@@ -479,6 +493,9 @@ struct MVS_API DepthEstimator {
 	const float angle1Range, angle2Range;
 	const float thConfSmall, thConfBig;
 	const float thRobust;
+	#if DENSE_REFINE == DENSE_REFINE_EXACT
+	const float thPerturbation;
+	#endif
 	#ifdef DENSE_ACPMH
 	const float thMc;
 	const unsigned thN1, thN2 ,thK;

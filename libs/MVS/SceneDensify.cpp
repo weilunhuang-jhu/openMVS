@@ -616,7 +616,7 @@ void* STCALL DepthMapsData::EndDepthMapTmp(void* arg)
 			const float fCosAngle(estimator.scores.size() > 1 ? estimator.scores.GetNth(1) : estimator.scores.front());
 			#else
 			#if DENSE_AGGNCC == DENSE_AGGNCC_NTH
-			const float fCosAngle(estimator.scores.size() > 1 ? estimator.scores.GetNth(estimator.idxScore) : estimator.scores.front());
+			const float fCosAngle(estimator.scores.GetNth(estimator.idxScore));
 			#elif DENSE_AGGNCC == DENSE_AGGNCC_MEAN
 			const float fCosAngle(estimator.scores.mean());
 			#else
@@ -1791,7 +1791,7 @@ void Scene::DenseReconstructionEstimate(void* pData)
 			}
 			// try to load already compute depth-map for this image
 			if (depthData.Load(ComposeDepthFilePath(idx, "dmap"))) {
-				if (OPTDENSE::nOptimize & (OPTDENSE::OPTIMIZE)) {
+				if (OPTDENSE::nOptimize & OPTDENSE::OPTIMIZE) {
 					// optimize depth-map
 					data.events.AddEventFirst(new EVTOptimizeDepthMap(evtImage.idxImage));
 				} else {

@@ -86,7 +86,7 @@ MDEFVAR_OPTDENSE_float(fOptimizerEps, "Optimizer Eps", "MRF optimizer stop epsil
 MDEFVAR_OPTDENSE_int32(nOptimizerMaxIters, "Optimizer Max Iters", "MRF optimizer max number of iterations", "80")
 MDEFVAR_OPTDENSE_uint32(nSpeckleSize, "Speckle Size", "maximal size of a speckle (small speckles get removed)", "100")
 MDEFVAR_OPTDENSE_uint32(nIpolGapSize, "Interpolate Gap Size", "interpolate small gaps (left<->right, top<->bottom)", "7")
-MDEFVAR_OPTDENSE_uint32(nOptimize, "Optimize", "should we filter the extracted depth-maps?", "7") // see OPTIMIZE_FLAGS
+MDEFVAR_OPTDENSE_uint32(nOptimize, "Optimize", "should we filter the extracted depth-maps?", "7") // see DepthFlags
 MDEFVAR_OPTDENSE_uint32(nEstimateColors, "Estimate Colors", "should we estimate the colors for the dense point-cloud?", "1", "0")
 MDEFVAR_OPTDENSE_uint32(nEstimateNormals, "Estimate Normals", "should we estimate the normals for the dense point-cloud?", "0", "1", "2")
 MDEFVAR_OPTDENSE_float(fNCCThresholdKeep, "NCC Threshold Keep", "Maximum 1-NCC score accepted for a match", "0.5", "0.3")
@@ -361,6 +361,9 @@ DepthEstimator::DepthEstimator(
 	thConfSmall(OPTDENSE::fNCCThresholdKeep*0.25f),
 	thConfBig(OPTDENSE::fNCCThresholdKeep*0.5f),
 	thRobust(OPTDENSE::fNCCThresholdKeep*1.2f)
+	#if DENSE_REFINE == DENSE_REFINE_EXACT
+	, thPerturbation(1.f/POW(2.f,float(nIter+1)))
+	#endif
 	#ifdef DENSE_ACPMH
 	, thMc(OPTDENSE::fNCCThresholdMcInit*EXP(-(float)SQUARE(nIter)/90.f)),
 	thN1(MINF(2u,images.size()-1)), thN2(MINF(3u,images.size())), thK(MINF(4u,images.size()))
@@ -549,7 +552,7 @@ float DepthEstimator::ScorePixel(Depth depth, const Normal& normal)
 		scores[idxView] = ScorePixelImage(images[idxView], depth, normal);
 	#if DENSE_AGGNCC == DENSE_AGGNCC_NTH
 	// set score as the nth element
-	return scores.size() > 1 ? scores.GetNth(idxScore) : scores.front();
+	return scores.GetNth(idxScore);
 	#elif DENSE_AGGNCC == DENSE_AGGNCC_MEAN
 	// set score as the average similarity
 	return scores.mean();
@@ -870,6 +873,7 @@ void DepthEstimator::ProcessPixel(IDX idx)
 		Normal& normal = normalMap0(x0);
 		const Normal viewDir(Cast<float>(static_cast<const Point3&>(X0)));
 		ASSERT(depth > 0 && normal.dot(viewDir) < 0);
+		#if DENSE_REFINE == DENSE_REFINE_ITER
 		// check if any of the neighbor estimates are better then the current estimate
 		#if DENSE_SMOOTHNESS != DENSE_SMOOTHNESS_NA
 		FOREACH(n, neighbors) {
@@ -937,6 +941,64 @@ void DepthEstimator::ProcessPixel(IDX idx)
 				++invScaleRange;
 			}
 		}
+		#else
+		// current pixel estimate
+		PixelEstimate currEstimate{depth, normal};
+		// propagate depth estimate from the best neighbor estimate
+		PixelEstimate prevEstimate; float prevCost(FLT_MAX);
+		#if DENSE_SMOOTHNESS != DENSE_SMOOTHNESS_NA
+		FOREACH(n, neighbors) {
+			const ImageRef& nx = neighbors[n];
+		#else
+		for (const NeighborData& neighbor: neighbors) {
+			const ImageRef& nx = neighbor.x;
+		#endif
+			float nconf(confMap0(nx));
+			const unsigned ninvScaleRange(DecodeScoreScale(nconf));
+			ASSERT(nconf >= 0 && nconf <= 2);
+			if (nconf >= OPTDENSE::fNCCThresholdKeep)
+				continue;
+			if (prevCost <= nconf)
+				continue;
+			#if DENSE_SMOOTHNESS != DENSE_SMOOTHNESS_NA
+			const NeighborEstimate& neighbor = neighborsClose[n];
+			#endif
+			if (neighbor.normal.dot(viewDir) >= 0)
+				continue;
+			prevEstimate.depth = InterpolatePixel(nx, neighbor.depth, neighbor.normal);
+			prevEstimate.normal = neighbor.normal;
+			prevCost = nconf;
+		}
+		if (prevCost == FLT_MAX)
+			prevEstimate = PerturbEstimate(currEstimate, thPerturbation);
+		// randomly sampled estimate
+		PixelEstimate randEstimate(PerturbEstimate(currEstimate, thPerturbation));
+		// select best pixel estimate
+		const int numCosts = 5;
+		float costs[numCosts] = {0,0,0,0,0};
+		const Depth depths[numCosts] = {
+			currEstimate.depth, prevEstimate.depth, randEstimate.depth,
+			currEstimate.depth, randEstimate.depth};
+		const Normal normals[numCosts] = {
+			currEstimate.normal, prevEstimate.normal,
+			randEstimate.normal, randEstimate.normal,
+			currEstimate.normal};
+		conf = FLT_MAX;
+		for (int idxCost=0; idxCost<numCosts; ++idxCost) {
+			const Depth ndepth(depths[idxCost]);
+			const Normal nnormal(normals[idxCost]);
+			#if DENSE_SMOOTHNESS == DENSE_SMOOTHNESS_PLANE
+			InitPlane(ndepth, nnormal);
+			#endif
+			const float nconf(ScorePixel(ndepth, nnormal));
+			ASSERT(nconf >= 0);
+			if (conf > nconf) {
+				conf = nconf;
+				depth = ndepth;
+				normal = nnormal;
+			}
+		}
+		#endif
 	}
 	conf = EncodeScoreScale(conf, invScaleRange);
 }
@@ -1007,6 +1069,43 @@ Depth DepthEstimator::InterpolatePixel(const ImageRef& nx, Depth depth, const No
 	#endif
 	return ISINSIDE(depthNew,dMin,dMax) ? depthNew : depth;
 }
+
+#if DENSE_REFINE == DENSE_REFINE_EXACT
+DepthEstimator::PixelEstimate DepthEstimator::PerturbEstimate(const PixelEstimate& est, float perturbation)
+{
+	PixelEstimate ptbEst;
+
+	// perturb depth
+	const float minDepth = est.depth * (1.f-perturbation);
+	const float maxDepth = est.depth * (1.f+perturbation);
+	ptbEst.depth = CLAMP(rnd.randomUniform(minDepth, maxDepth), dMin, dMax);
+
+	// perturb normal
+	const Normal viewDir(Cast<float>(static_cast<const Point3&>(X0)));
+	std::uniform_real_distribution<float> urd(-1.f, 1.f);
+	const int numMaxTrials = 3;
+	int numTrials = 0;
+	perturbation *= FHALF_PI;
+	while(true) {
+		// generate random perturbation rotation
+		const RMatrixBaseF R(urd(rnd)*perturbation, urd(rnd)*perturbation, urd(rnd)*perturbation);
+		// perturb normal vector
+		ptbEst.normal = R * est.normal;
+		// make sure the perturbed normal is still looking towards the camera,
+		// otherwise try again with a smaller perturbation
+		if (ptbEst.normal.dot(viewDir) < 0.f)
+			break;
+		if (++numTrials == numMaxTrials) {
+			ptbEst.normal = est.normal;
+			return ptbEst;
+		}
+		perturbation *= 0.5f;
+	}
+	ASSERT(ISEQUAL(norm(ptbEst.normal), 1.f));
+
+	return ptbEst;
+}
+#endif
 /*----------------------------------------------------------------*/
 
 

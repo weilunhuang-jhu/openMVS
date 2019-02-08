@@ -619,8 +619,12 @@ void* STCALL DepthMapsData::EndDepthMapTmp(void* arg)
 			const float fCosAngle(estimator.scores.GetNth(estimator.idxScore));
 			#elif DENSE_AGGNCC == DENSE_AGGNCC_MEAN
 			const float fCosAngle(estimator.scores.mean());
-			#else
+			#elif DENSE_AGGNCC == DENSE_AGGNCC_MIN
 			const float fCosAngle(estimator.scores.minCoeff());
+			#else
+			const float fCosAngle(estimator.idxScore ?
+				std::accumulate(estimator.scores.begin(), &estimator.scores.PartialSort(estimator.idxScore), 0.f) / estimator.idxScore :
+				*std::min_element(estimator.scores.cbegin(), estimator.scores.cend()));
 			#endif
 			#endif
 			const float wAngle(MINF(POW(ACOS(fCosAngle)/fOptimAngle,1.5f),1.f));

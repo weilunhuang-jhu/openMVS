@@ -347,6 +347,8 @@ DepthEstimator::DepthEstimator(
 	dir(_dir),
 	#if DENSE_AGGNCC == DENSE_AGGNCC_NTH
 	idxScore((_depthData0.images.size()-1)/3),
+	#elif DENSE_AGGNCC == DENSE_AGGNCC_MINMEAN
+	idxScore(_depthData0.images.size()<=2 ? 0u : 1u),
 	#endif
 	#endif
 	#ifdef DENSE_ACPMH
@@ -555,10 +557,52 @@ float DepthEstimator::ScorePixel(Depth depth, const Normal& normal)
 	return scores.GetNth(idxScore);
 	#elif DENSE_AGGNCC == DENSE_AGGNCC_MEAN
 	// set score as the average similarity
+	#if 1
 	return scores.mean();
 	#else
+	const float* pscore(scores.data());
+	const float* pescore(pscore+scores.rows());
+	float score(0);
+	do {
+		score += MINF(*pscore, thRobust);
+	} while (++pscore <= pescore);
+	return score/scores.rows();
+	#endif
+	#elif DENSE_AGGNCC == DENSE_AGGNCC_MIN
 	// set score as the min similarity
 	return scores.minCoeff();
+	#else
+	// set score as the min-mean similarity
+	if (idxScore == 0)
+		return *std::min_element(scores.cbegin(), scores.cend());
+	#if 0
+	return std::accumulate(scores.begin(), &scores.PartialSort(idxScore), 0.f) / idxScore;
+	#elif 1
+	const float* pescore(&scores.PartialSort(idxScore));
+	const float* pscore(scores.cbegin());
+	int n(0); float score(0);
+	do {
+		const float s(*pscore);
+		if (s < thRobust) {
+			score += s;
+			++n;
+		}
+	} while (++pscore <= pescore);
+	return n ? score/n : thRobust;
+	#else
+	const float thScore(MAXF(*std::min_element(scores.cbegin(), scores.cend()), 0.05f)*2);
+	const float* pscore(scores.cbegin());
+	const float* pescore(pscore+scores.size());
+	int n(0); float score(0);
+	do {
+		const float s(*pscore);
+		if (s <= thScore) {
+			score += s;
+			++n;
+		}
+	} while (++pscore <= pescore);
+	return score/n;
+	#endif
 	#endif
 }
 #endif

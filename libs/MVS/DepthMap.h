@@ -51,13 +51,14 @@
 #define DENSE_AGGNCC_NTH 0
 #define DENSE_AGGNCC_MEAN 1
 #define DENSE_AGGNCC_MIN 2
-#define DENSE_AGGNCC DENSE_AGGNCC_MIN
+#define DENSE_AGGNCC_MINMEAN 3
+#define DENSE_AGGNCC DENSE_AGGNCC_MINMEAN
 
 // type of smoothness used during depth-map estimation
 #define DENSE_SMOOTHNESS_NA 0
 #define DENSE_SMOOTHNESS_FAST 1
 #define DENSE_SMOOTHNESS_PLANE 2
-#define DENSE_SMOOTHNESS DENSE_AGGNCC_NTH
+#define DENSE_SMOOTHNESS DENSE_SMOOTHNESS_PLANE
 
 // type of refinement used during depth-map estimation
 #define DENSE_REFINE_ITER 0
@@ -305,7 +306,7 @@ struct MVS_API DepthEstimator {
 	#if DENSE_NCC == DENSE_NCC_DEFAULT
 	TexelVec texels1;
 	#endif
-	#if defined(DENSE_ACPMH) || DENSE_AGGNCC == DENSE_AGGNCC_NTH
+	#if defined(DENSE_ACPMH) || DENSE_AGGNCC == DENSE_AGGNCC_NTH || DENSE_AGGNCC == DENSE_AGGNCC_MINMEAN
 	FloatArr scores;
 	#else
 	Eigen::VectorXf scores;
@@ -334,7 +335,7 @@ struct MVS_API DepthEstimator {
 	const Depth dMin, dMax;
 	#ifndef DENSE_ACPMH
 	const ENDIRECTION dir;
-	#if DENSE_AGGNCC == DENSE_AGGNCC_NTH
+	#if DENSE_AGGNCC == DENSE_AGGNCC_NTH || DENSE_AGGNCC == DENSE_AGGNCC_MINMEAN
 	const IDX idxScore;
 	#endif
 	#endif

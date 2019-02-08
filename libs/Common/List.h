@@ -627,6 +627,13 @@ public:
 		return std::accumulate(Begin(), End(), TYPE(0)) / _size;
 	}
 
+	inline TYPE&	PartialSort(IDX index)
+	{
+		TYPE* const nth(Begin()+index);
+		std::partial_sort(Begin(), nth, End());
+		return *nth;
+	}
+
 	inline void		Sort()
 	{
 		std::sort(Begin(), End());

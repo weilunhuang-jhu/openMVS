@@ -138,7 +138,7 @@ public:
 	bool GapInterpolation(DepthData& depthData);
 
 	bool FilterDepthMap(DepthData& depthData, const IIndexArr& idxNeighbors, bool bAdjust=true);
-	void FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal);
+	void FuseDepthMaps(PointCloud& pointcloud, bool bEstimateColor, bool bEstimateNormal);
 
 protected:
 	static void* STCALL ScoreDepthMapTmp(void*);
@@ -610,6 +610,9 @@ void* STCALL DepthMapsData::EndDepthMapTmp(void* arg)
 			depth = 0;
 		} else {
 			#if 1
+			conf = 1.f/(MAXF(conf,1e-2f)*depth);
+			#else
+			#if 1
 			FOREACH(i, estimator.images)
 				estimator.scores[i] = ComputeAngle<REAL,float>(estimator.image0.camera.TransformPointI2W(Point3(x,depth)).ptr(), estimator.image0.camera.C.ptr(), estimator.images[i].view.camera.C.ptr());
 			#ifdef DENSE_ACPMH
@@ -637,6 +640,7 @@ void* STCALL DepthMapsData::EndDepthMapTmp(void* arg)
 			conf = wAngle/(depth*SQUARE(MAXF(conf,1e-2f)));
 			#else
 			conf = SQRT((float)invScaleRange)*wAngle/(depth*SQUARE(MAXF(conf,1e-2f)));
+			#endif
 			#endif
 		}
 	}
@@ -1361,7 +1365,7 @@ struct Proj {
 };
 typedef SEACAVE::cList<Proj,const Proj&,0,4,uint32_t> ProjArr;
 typedef SEACAVE::cList<ProjArr,const ProjArr&,1,65536> ProjsArr;
-void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
+void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateColor, bool bEstimateNormal)
 {
 	TD_TIMER_STARTD();
 
@@ -1394,6 +1398,8 @@ void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
 	pointcloud.points.Reserve(nPointsEstimate);
 	pointcloud.pointViews.Reserve(nPointsEstimate);
 	pointcloud.pointWeights.Reserve(nPointsEstimate);
+	if (bEstimateColor)
+		pointcloud.colors.Reserve(nPointsEstimate);
 	if (bEstimateNormal)
 		pointcloud.normals.Reserve(nPointsEstimate);
 	Util::Progress progress(_T("Fused depth-maps"), connections.GetSize());
@@ -1447,6 +1453,7 @@ void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
 				// check the projection in the neighbor depth-maps
 				REAL confidence(weights.First());
 				Point3 X(point*confidence);
+				Pixel32F C(Cast<float>(imageData.image(x))*confidence);
 				PointCloud::Normal N(normal*confidence);
 				invalidDepths.Empty();
 				FOREACHPTR(pNeighbor, depthData.neighbors) {
@@ -1479,6 +1486,8 @@ void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
 							pointProjs.InsertAt(idx, Proj(xB));
 							idxPointB = idxPoint;
 							X += imageDataB.camera.TransformPointI2W(Point3(Point2f(xB),depthB))*REAL(confidenceB);
+							if (bEstimateColor)
+								C += Cast<float>(imageDataB.image(xB))*confidenceB;
 							if (bEstimateNormal)
 								N += normalB*confidenceB;
 							confidence += confidenceB;
@@ -1506,6 +1515,8 @@ void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
 					// this point is valid, store it
 					point = X*(REAL(1)/confidence);
 					ASSERT(ISFINITE(point));
+					if (bEstimateColor)
+						pointcloud.colors.AddConstruct(Cast<uint8_t>(C*(1.f/confidence)));
 					if (bEstimateNormal)
 						pointcloud.normals.AddConstruct(normalized(N*(1.f/confidence)));
 					// invalidate all neighbor depths that do not agree with it
@@ -1744,7 +1755,7 @@ bool Scene::DenseReconstruction()
 
 	// fuse all depth-maps
 	pointcloud.Release();
-	data.detphMaps.FuseDepthMaps(pointcloud, OPTDENSE::nEstimateNormals == 2);
+	data.detphMaps.FuseDepthMaps(pointcloud, OPTDENSE::nEstimateColors == 2, OPTDENSE::nEstimateNormals == 2);
 	#if TD_VERBOSE != TD_VERBOSE_OFF
 	if (g_nVerbosityLevel > 2) {
 		// print number of points with 3+ views

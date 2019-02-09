@@ -115,6 +115,7 @@ extern float fOptimAngle;
 extern float fMaxAngle;
 extern float fDescriptorMinMagnitudeThreshold;
 extern float fDepthDiffThreshold;
+extern float fNormalDiffThreshold;
 extern float fPairwiseMul;
 extern float fOptimizerEps;
 extern int nOptimizerMaxIters;

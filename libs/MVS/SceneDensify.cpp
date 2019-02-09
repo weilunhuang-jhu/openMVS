@@ -1384,6 +1384,7 @@ void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
 
 	// fuse all depth-maps, processing the best connected images first
 	const unsigned nMinViewsFuse(MINF(OPTDENSE::nMinViewsFuse, scene.images.GetSize()));
+	const float normalError(COS(FD2R(OPTDENSE::fNormalDiffThreshold)));
 	CLISTDEF0(Depth*) invalidDepths(0, 32);
 	size_t nDepths(0);
 	typedef TImage<cuint32_t> DepthIndex;
@@ -1393,6 +1394,8 @@ void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
 	pointcloud.points.Reserve(nPointsEstimate);
 	pointcloud.pointViews.Reserve(nPointsEstimate);
 	pointcloud.pointWeights.Reserve(nPointsEstimate);
+	if (bEstimateNormal)
+		pointcloud.normals.Reserve(nPointsEstimate);
 	Util::Progress progress(_T("Fused depth-maps"), connections.GetSize());
 	GET_LOGCONSOLE().Pause();
 	FOREACHPTR(pConnection, connections) {
@@ -1439,9 +1442,12 @@ void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
 				weights.Insert(depthData.confMap(x));
 				ProjArr& pointProjs = projs.AddEmpty();
 				pointProjs.Insert(Proj(x));
+				const PointCloud::Normal normal(imageData.camera.R.t()*Cast<REAL>(depthData.normalMap(x)));
+				ASSERT(ISEQUAL(norm(normal), 1.f));
 				// check the projection in the neighbor depth-maps
 				REAL confidence(weights.First());
 				Point3 X(point*confidence);
+				PointCloud::Normal N(normal*confidence);
 				invalidDepths.Empty();
 				FOREACHPTR(pNeighbor, depthData.neighbors) {
 					const IIndex idxImageB(pNeighbor->idx.ID);
@@ -1461,16 +1467,24 @@ void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
 					if (idxPointB != NO_ID)
 						continue;
 					if (IsDepthSimilar(pt.z, depthB, OPTDENSE::fDepthDiffThreshold)) {
-						// add view to the 3D point
-						ASSERT(views.FindFirst(idxImageB) == PointCloud::ViewArr::NO_INDEX);
-						const float confidenceB(depthDataB.confMap(xB));
-						const IIndex idx(views.InsertSort(idxImageB));
-						weights.InsertAt(idx, confidenceB);
-						pointProjs.InsertAt(idx, Proj(xB));
-						idxPointB = idxPoint;
-						X += imageDataB.camera.TransformPointI2W(Point3(Point2f(xB),depthB))*REAL(confidenceB);
-						confidence += confidenceB;
-					} else
+						// check if normals agree
+						const PointCloud::Normal normalB(imageDataB.camera.R.t()*Cast<REAL>(depthDataB.normalMap(xB)));
+						ASSERT(ISEQUAL(norm(normalB), 1.f));
+						if (normal.dot(normalB) > normalError) {
+							// add view to the 3D point
+							ASSERT(views.FindFirst(idxImageB) == PointCloud::ViewArr::NO_INDEX);
+							const float confidenceB(depthDataB.confMap(xB));
+							const IIndex idx(views.InsertSort(idxImageB));
+							weights.InsertAt(idx, confidenceB);
+							pointProjs.InsertAt(idx, Proj(xB));
+							idxPointB = idxPoint;
+							X += imageDataB.camera.TransformPointI2W(Point3(Point2f(xB),depthB))*REAL(confidenceB);
+							if (bEstimateNormal)
+								N += normalB*confidenceB;
+							confidence += confidenceB;
+							continue;
+						}
+					}
 					if (pt.z < depthB) {
 						// discard depth
 						invalidDepths.Insert(&depthB);
@@ -1492,6 +1506,8 @@ void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
 					// this point is valid, store it
 					point = X*(REAL(1)/confidence);
 					ASSERT(ISFINITE(point));
+					if (bEstimateNormal)
+						pointcloud.normals.AddConstruct(normalized(N*(1.f/confidence)));
 					// invalidate all neighbor depths that do not agree with it
 					for (Depth* pDepth: invalidDepths)
 						*pDepth = 0;
@@ -1508,7 +1524,7 @@ void DepthMapsData::FuseDepthMaps(PointCloud& pointcloud, bool bEstimateNormal)
 
 	DEBUG_EXTRA("Depth-maps fused and filtered: %u depth-maps, %u depths, %u points (%d%%%%) (%s)", connections.GetSize(), nDepths, pointcloud.points.GetSize(), ROUND2INT((100.f*pointcloud.points.GetSize())/nDepths), TD_TIMER_GET_FMT().c_str());
 
-	if (bEstimateNormal && !pointcloud.points.IsEmpty()) {
+	if (bEstimateNormal && !pointcloud.points.IsEmpty() && pointcloud.normals.IsEmpty()) {
 		// estimate normal also if requested (quite expensive if normal-maps not available)
 		TD_TIMER_STARTD();
 		pointcloud.normals.Resize(pointcloud.points.GetSize());

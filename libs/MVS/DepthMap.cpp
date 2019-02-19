@@ -314,8 +314,6 @@ DepthEstimator::DepthEstimator(
 	#endif
 	#ifdef DENSE_ACPMH
 	ViewsIDMap& _viewsIDMap0,
-	#else
-	ENDIRECTION _dir,
 	#endif
 	const MapRefArr& _coords)
 	:
@@ -343,7 +341,7 @@ DepthEstimator::DepthEstimator(
 	coords(_coords), size(_depthData0.images.First().image.size()),
 	dMin(_depthData0.dMin), dMax(_depthData0.dMax),
 	#ifndef DENSE_ACPMH
-	dir(_dir),
+	dir(nIter%2 ? RB2LT : LT2RB),
 	#if DENSE_AGGNCC == DENSE_AGGNCC_NTH
 	idxScore((_depthData0.images.size()-1)/3),
 	#elif DENSE_AGGNCC == DENSE_AGGNCC_MINMEAN

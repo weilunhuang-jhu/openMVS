@@ -677,7 +677,7 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 	// initialize the depth-map
 	if (OPTDENSE::nMinViewsTrustPoint < 2) {
 		// compute depth range and initialize known depths
-		const int nPixelArea(3); // half windows size around a pixel to be initialize with the known depth
+		const int nPixelArea(2); // half windows size around a pixel to be initialize with the known depth
 		const Camera& camera = depthData.images.First().camera;
 		depthData.dMin = FLT_MAX;
 		depthData.dMax = 0;
@@ -688,9 +688,12 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 			const float d((float)camX.z);
 			const ImageRef sx(MAXF(x.x-nPixelArea,0), MAXF(x.y-nPixelArea,0));
 			const ImageRef ex(MINF(x.x+nPixelArea,size.width-1), MINF(x.y+nPixelArea,size.height-1));
-			for (int y=sx.y; y<=ex.y; ++y)
-				for (int x=sx.x; x<=ex.x; ++x)
+			for (int y=sx.y; y<=ex.y; ++y) {
+				for (int x=sx.x; x<=ex.x; ++x) {
 					depthData.depthMap(y,x) = d;
+					depthData.normalMap(y,x) = Normal::ZERO;
+				}
+			}
 			if (depthData.dMin > d)
 				depthData.dMin = d;
 			if (depthData.dMax < d)
@@ -755,8 +758,6 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 				#endif
 				#ifdef DENSE_ACPMH
 				viewsIDMap0,
-				#else
-				DepthEstimator::RB2LT,
 				#endif
 				coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
@@ -780,9 +781,6 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 	// run propagation and random refinement cycles on the reference data
 	for (unsigned iter=0; iter<OPTDENSE::nEstimationIters; ++iter) {
 		// create working threads
-		#ifndef DENSE_ACPMH
-		const DepthEstimator::ENDIRECTION dir((DepthEstimator::ENDIRECTION)(iter%DepthEstimator::DIRS));
-		#endif
 		idxPixel = -1;
 		ASSERT(estimators.IsEmpty());
 		while (estimators.GetSize() < nMaxThreads)
@@ -794,8 +792,6 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 				#endif
 				#ifdef DENSE_ACPMH
 				viewsIDMap0,
-				#else
-				dir,
 				#endif
 				coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
@@ -823,7 +819,7 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 		idxPixel = -1;
 		ASSERT(estimators.IsEmpty());
 		while (estimators.GetSize() < nMaxThreads)
-			estimators.AddConstruct(OPTDENSE::nEstimationIters, depthData, idxPixel,
+			estimators.AddConstruct(0, depthData, idxPixel,
 				#if DENSE_NCC == DENSE_NCC_WEIGHTED
 				weightMap0,
 				#else
@@ -831,8 +827,6 @@ bool DepthMapsData::EstimateDepthMap(IIndex idxImage)
 				#endif
 				#ifdef DENSE_ACPMH
 				viewsIDMap0,
-				#else
-				DepthEstimator::DIRS,
 				#endif
 				coords);
 		ASSERT(estimators.GetSize() == threads.GetSize()+1);
@@ -1785,7 +1779,7 @@ bool Scene::DenseReconstruction()
 			EstimatePointNormals(images, pointcloud);
 	}
 	return true;
-} // DenseReconstructionDepthMap
+} // DenseReconstruction
 /*----------------------------------------------------------------*/
 
 void* DenseReconstructionEstimateTmp(void* arg) {
@@ -1821,14 +1815,14 @@ void Scene::DenseReconstructionEstimate(void* pData)
 				break;
 			}
 			// try to load already compute depth-map for this image
-			if (depthData.Load(ComposeDepthFilePath(idx, "dmap"))) {
+			if (File::access(ComposeDepthFilePath(idx, "dmap"))) {
 				if (OPTDENSE::nOptimize & OPTDENSE::OPTIMIZE) {
+					if (!depthData.Load(ComposeDepthFilePath(idx, "dmap"))) {
+						VERBOSE("error: invalid depth-map '%s'", ComposeDepthFilePath(idx, "dmap").c_str());
+						exit(EXIT_FAILURE);
+					}
 					// optimize depth-map
 					data.events.AddEventFirst(new EVTOptimizeDepthMap(evtImage.idxImage));
-				} else {
-					// release image data
-					depthData.ReleaseImages();
-					depthData.Release();
 				}
 				// process next image
 				data.events.AddEvent(new EVTProcessImage((uint32_t)Thread::safeInc(data.idxImage)));
@@ -2006,4 +2000,139 @@ void Scene::DenseReconstructionFilter(void* pData)
 		}
 	}
 } // DenseReconstructionFilter
+/*----------------------------------------------------------------*/
+
+// filter point-cloud based on camera-point visibility intersections
+void Scene::PointCloudFilter(int thRemove)
+{
+	TD_TIMER_STARTD();
+
+	typedef TOctree<PointCloud::PointArr,PointCloud::Point::Type,3,uint32_t,128> Octree;
+	struct Collector {
+		typedef Octree::IDX_TYPE IDX;
+		typedef PointCloud::Point::Type Real;
+		typedef TCone<Real,3> Cone;
+		typedef TSphere<Real,3> Sphere;
+		typedef TConeIntersect<Real,3> ConeIntersect;
+
+		Cone cone;
+		const ConeIntersect coneIntersect;
+		const PointCloud& pointcloud;
+		IntArr& visibility;
+		PointCloud::Index idxPoint;
+		Real distance;
+		int weight;
+		#ifdef DENSE_USE_OPENMP
+		uint8_t pcs[sizeof(CriticalSection)];
+		#endif
+
+		Collector(const Cone::RAY& ray, Real angle, const PointCloud& _pointcloud, IntArr& _visibility)
+			: cone(ray, angle), coneIntersect(cone), pointcloud(_pointcloud), visibility(_visibility)
+		#ifdef DENSE_USE_OPENMP
+		{ new(pcs) CriticalSection; }
+		~Collector() { reinterpret_cast<CriticalSection*>(pcs)->~CriticalSection(); }
+		inline CriticalSection& GetCS() { return *reinterpret_cast<CriticalSection*>(pcs); }
+		#else
+		{}
+		#endif
+		inline void Init(PointCloud::Index _idxPoint, const PointCloud::Point& X, int _weight) {
+			const Real thMaxDepth(1.02f);
+			idxPoint =_idxPoint;
+			const PointCloud::Point::EVec D((PointCloud::Point::EVec&)X-cone.ray.m_pOrig);
+			distance = D.norm();
+			cone.ray.m_vDir = D/distance;
+			cone.maxHeight = MaxDepthDifference(distance, thMaxDepth);
+			weight = _weight;
+		}
+		inline bool Intersects(const Octree::POINT_TYPE& center, Octree::Type radius) const {
+			return coneIntersect(Sphere(center, radius*Real(SQRT_3)));
+		}
+		inline void operator () (const IDX* idices, IDX size) {
+			const Real thSimilar(0.01f);
+			Real dist;
+			FOREACHRAWPTR(pIdx, idices, size) {
+				const PointCloud::Index idx(*pIdx);
+				if (coneIntersect.Classify(pointcloud.points[idx], dist) == VISIBLE && !IsDepthSimilar(distance, dist, thSimilar)) {
+					if (dist > distance)
+						visibility[idx] += pointcloud.pointViews[idx].size();
+					else
+						visibility[idx] -= weight;
+				}
+			}
+		}
+	};
+	typedef CLISTDEF2(Collector) Collectors;
+
+	// create octree to speed-up search
+	Octree octree(pointcloud.points);
+	IntArr visibility(pointcloud.GetSize()); visibility.Memset(0);
+	Collectors collectors; collectors.reserve(images.size());
+	FOREACH(idxView, images) {
+		const Image& image = images[idxView];
+		const Ray3f ray(Cast<float>(image.camera.C), Cast<float>(image.camera.Direction()));
+		const float angle(float(image.ComputeFOV(0)/image.width));
+		collectors.emplace_back(ray, angle, pointcloud, visibility);
+	}
+
+	// run all camera-point visibility intersections
+	Util::Progress progress(_T("Point visibility checks"), pointcloud.GetSize());
+	#ifdef DENSE_USE_OPENMP
+	#pragma omp parallel for //schedule(dynamic)
+	for (int64_t i=0; i<(int64_t)pointcloud.GetSize(); ++i) {
+		const PointCloud::Index idxPoint((PointCloud::Index)i);
+	#else
+	FOREACH(idxPoint, pointcloud.points) {
+	#endif
+		const PointCloud::Point& X = pointcloud.points[idxPoint];
+		const PointCloud::ViewArr& views = pointcloud.pointViews[idxPoint];
+		for (PointCloud::View idxView: views) {
+			Collector& collector = collectors[idxView];
+			#ifdef DENSE_USE_OPENMP
+			Lock l(collector.GetCS());
+			#endif
+			collector.Init(idxPoint, X, (int)views.size());
+			octree.Collect(collector, collector);
+		}
+		++progress;
+	}
+	progress.close();
+
+	#if TD_VERBOSE != TD_VERBOSE_OFF
+	if (g_nVerbosityLevel > 2) {
+		// print visibility stats
+		UnsignedArr counts(0, 64);
+		for (int views: visibility) {
+			if (views > 0)
+				continue;
+			while (counts.size() <= -views)
+				counts.push_back(0);
+			++counts[-views];
+		}
+		String msg;
+		msg.reserve(64*counts.size());
+		FOREACH(c, counts)
+			if (counts[c])
+				msg += String::FormatString("\n\t% 3u - % 9u", c, counts[c]);
+		VERBOSE("Visibility lengths (%u points):%s", pointcloud.GetSize(), msg.c_str());
+		// save outlier points
+		PointCloud pc;
+		RFOREACH(idxPoint, pointcloud.points) {
+			if (visibility[idxPoint] <= thRemove) {
+				pc.points.push_back(pointcloud.points[idxPoint]);
+				pc.colors.push_back(pointcloud.colors[idxPoint]);
+			}
+		}
+		pc.Save(MAKE_PATH("scene_dense_outliers.ply"));
+	}
+	#endif
+
+	// filter points
+	const size_t numInitPoints(pointcloud.GetSize());
+	RFOREACH(idxPoint, pointcloud.points) {
+		if (visibility[idxPoint] <= thRemove)
+			pointcloud.RemovePoint(idxPoint);
+	}
+
+	DEBUG_EXTRA("Point-cloud filtered: %u/%u points (%d%%%%) (%s)", pointcloud.points.size(), numInitPoints, ROUND2INT((100.f*pointcloud.points.GetSize())/numInitPoints), TD_TIMER_GET_FMT().c_str());
+} // PointCloudFilter
 /*----------------------------------------------------------------*/

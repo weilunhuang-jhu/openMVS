@@ -356,8 +356,6 @@ struct MVS_API DepthEstimator {
 		#endif
 		#ifdef DENSE_ACPMH
 		ViewsIDMap& _viewsIDMap0,
-		#else
-		ENDIRECTION _dir,
 		#endif
 		const MapRefArr& _coords);
 

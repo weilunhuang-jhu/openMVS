@@ -94,7 +94,7 @@ MDEFVAR_OPTDENSE_float(fNCCThresholdKeep, "NCC Threshold Keep", "Maximum 1-NCC s
 MDEFVAR_OPTDENSE_float(fNCCThresholdRefine, "NCC Threshold Refine", "1-NCC score under which a match is not refined anymore", "0.03")
 MDEFVAR_OPTDENSE_float(fNCCThresholdMcInit, "NCC Threshold McInit", "Maximum 1-NCC score accepted for a match", "0.8")
 MDEFVAR_OPTDENSE_float(fNCCThresholdMcUp, "NCC Threshold McUp", "Maximum 1-NCC score accepted for a match", "1.2")
-MDEFVAR_OPTDENSE_uint32(nEstimationIters, "Estimation Iters", "Number of iterations for depth-map refinement", "4")
+MDEFVAR_OPTDENSE_uint32(nEstimationIters, "Estimation Iters", "Number of iterations for depth-map refinement", "5")
 MDEFVAR_OPTDENSE_uint32(nRandomIters, "Random Iters", "Number of iterations for random assignment per pixel", "6")
 MDEFVAR_OPTDENSE_uint32(nRandomMaxScale, "Random Max Scale", "Maximum number of iterations to skip during random assignment", "2")
 MDEFVAR_OPTDENSE_float(fRandomDepthRatio, "Random Depth Ratio", "Depth range ratio of the current estimate for random plane assignment", "0.004")
@@ -656,21 +656,21 @@ void DepthEstimator::ProcessPixel(IDX idx)
 				}
 			}
 			if (bestConf < FLT_MAX) {
-				neighbors.emplace_back(NeighborData{bestNx, bestDepth, normalMap0(bestNx)});
-				CorrectNormal(neighbors.back().normal);
+				NeighborData& neighbor = neighbors.emplace_back(NeighborData{bestNx, bestDepth, normalMap0(bestNx)});
+				neighbor.depth = InterpolatePixel(neighbor.x, neighbor.depth, neighbor.normal);
+				CorrectNormal(neighbor.normal);
+				ASSERT(neighbor.depth > 0);
 			}
 		}
 		// estiamte all selected neighbors
 		M.resize(neighbors.size(), images.size());
 		FOREACH(idxNeigh, neighbors) {
 			const NeighborData& neighbor = neighbors[idxNeigh];
-			ASSERT(neighbor.depth > 0);
-			const Depth ndepth(InterpolatePixel(neighbor.x, neighbor.depth, neighbor.normal));
 			#if DENSE_SMOOTHNESS == DENSE_SMOOTHNESS_PLANE
-			InitPlane(ndepth, neighbor.normal);
+			InitPlane(neighbor.depth, neighbor.normal);
 			#endif
 			FOREACH(idxView, images)
-				M(idxNeigh, idxView) = ScorePixelImage(images[idxView], ndepth, neighbor.normal);
+				M(idxNeigh, idxView) = ScorePixelImage(images[idxView], neighbor.depth, neighbor.normal);
 		}
 		// select best hypothesis and set of valid views
 		const float beta(0.3f);
@@ -706,7 +706,8 @@ void DepthEstimator::ProcessPixel(IDX idx)
 			float bestDist(FLT_MAX); IIndex bestIdxNeigh;
 			FOREACH(idxNeigh, neighbors) {
 				TAccumulator<float> m;
-				for (uint8_t idxView: O) {
+				for (unsigned i=0; i<thK; ++i) {
+					const uint8_t idxView(O[i]);
 					if (S[idxView] == 0)
 						break;
 					m.Add(M(idxNeigh, idxView), S[idxView]);
@@ -1069,9 +1070,9 @@ Depth DepthEstimator::InterpolatePixel(const ImageRef& nx, Depth depth, const No
 		const float y2 = y1 - normal.y;
 		const float nom = y1 * x2 - x1 * y2;
 		depthNew = nom / denom;
-	}
+	} else
 	#ifndef DENSE_ACPMH
-	else {
+	{
 		ASSERT(x0.y == nx.y);
 	#else
 	if (x0.y == nx.y) {

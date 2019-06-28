@@ -637,6 +637,73 @@ void Scene::CastRay(const Ray3& ray, int action)
 				face[1], window.selectionPoints[1].x, window.selectionPoints[1].y, window.selectionPoints[1].z,
 				face[2], window.selectionPoints[2].x, window.selectionPoints[2].y, window.selectionPoints[2].z
 			);
+			//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+			Point3 ptc[3];//point to camera coord
+			Point2f pti[3];//point to image coord
+			std::vector<int> allCameras;
+
+			FOREACH(idxImage, scene.images) {
+				const MVS::Image& imageData = scene.images[idxImage];
+				std::cout << "idxImage " << idxImage << std::endl;
+				MVS::DepthMap depthMap(imageData.GetSize());
+
+				// project face vertices to image plane
+				for (int v = 0; v < 3; ++v) {
+					// skip face if not completely inside
+					//if (!ProjectVertex(scene.mesh.vertices[face[v]], v))
+
+					const MVS::Mesh::Vertex pt = scene.mesh.vertices[face[v]];
+					ptc[v] = imageData.camera.TransformPointW2C(Cast<REAL>(pt));
+					pti[v] = imageData.camera.TransformPointC2I(ptc[v]);
+					if (!depthMap.isInsideWithBorder<float, 3>(pti[v])) { //bool
+						std::cout << "NOT INSIDE " << std::endl;
+					}
+				}
+				// compute the face center, which is also the view to face vector
+				// (cause the face is in camera view space)
+				//TO-DO still computes face center if not inside
+				Point3 faceCenterW((scene.mesh.vertices[face[0]] + scene.mesh.vertices[face[1]] + scene.mesh.vertices[face[2]]) / 3); //in world coord
+				std::cout << "faceCenterW: " << faceCenterW << std::endl;
+				Point3 faceCenterC((ptc[0] + ptc[1] + ptc[2]) / 3); //in camera coord
+				std::cout << "faceCenterC: " << faceCenterC << std::endl;
+				Point3 faceCenterI((pti[0] + pti[1] + pti[2]) / 3); //in image coord
+				std::cout << "faceCenterI: " << faceCenterI << std::endl;
+
+				Ray3 rayr = Ray3();
+				rayr.SetFromPoints(imageData.camera.C, faceCenterW);
+				IntersectRayMesh intRayr(octMesh, rayr, scene.mesh);
+				const MVS::Mesh::Face& faceR = scene.mesh.faces[(MVS::Mesh::FIndex)intRayr.pick.idx];
+				DEBUG("Face reprojected:\n\tindex: %u\n\tvertex 1: %u (%g %g %g)\n\tvertex 2: %u (%g %g %g)\n\tvertex 3: %u (%g %g %g)\n\tray origin: %u \n\tray dir: (%g %g %g)",
+					intRayr.pick.idx,
+					faceR[0], scene.mesh.vertices[faceR[0]].x, scene.mesh.vertices[faceR[0]].y, scene.mesh.vertices[faceR[0]].z,
+					faceR[1], scene.mesh.vertices[faceR[1]].x, scene.mesh.vertices[faceR[1]].y, scene.mesh.vertices[faceR[1]].z,
+					faceR[2], scene.mesh.vertices[faceR[2]].x, scene.mesh.vertices[faceR[2]].y, scene.mesh.vertices[faceR[2]].z,
+					rayr.m_pOrig,
+					rayr.m_vDir
+				);
+
+				if (intRayr.pick.idx == intRay.pick.idx) {
+					allCameras.push_back(idxImage);
+				}
+			}
+
+
+			for (int i = 0; i < allCameras.size(); i++) {
+				std::cout << "IMAGE: " << allCameras.at(i) << std::endl;
+
+			}
+
+
+
+			/*
+			//Print out the camera id that directly sees the selected face
+			std::vector<int> allCamerasForFace = this->getAllCamerasSeeingFace(face, intRay);
+			for (int i = 0; i < allCamerasForFace.size(); i++) {
+				std::cout << "CAMERA: " << allCamerasForFace.at(i) << std::endl;
+
+			}
+			*/
+
 		} else {
 			window.selectionType = Window::SEL_NA;
 		}
@@ -672,4 +739,60 @@ void Scene::CastRay(const Ray3& ray, int action)
 	break; }
 	}
 }
+
+/*
+std::vector<int> VIEWER::Scene::getAllCamerasSeeingFace(const MVS::Mesh::Face& face, IntersectRayMesh intRay)
+{
+	Point3 ptc[3];//world coord point to camera coord
+	Point2f pti[3];//camera coord point to image coord
+	std::vector<int> allCameras;
+
+	FOREACH(idxImage, scene.images) {
+		const MVS::Image& imageData = scene.images[idxImage];
+		std::cout << "idxImage " << idxImage << std::endl;
+		MVS::DepthMap depthMap(imageData.GetSize());
+
+		// project face vertices to image plane
+		for (int v = 0; v < 3; ++v) {
+			// skip face if not completely inside
+			//if (!ProjectVertex(scene.mesh.vertices[face[v]], v))
+			const MVS::Mesh::Vertex pt = scene.mesh.vertices[face[v]];
+			ptc[v] = imageData.camera.TransformPointW2C(Cast<REAL>(pt));
+			pti[v] = imageData.camera.TransformPointC2I(ptc[v]);
+			if (!depthMap.isInsideWithBorder<float, 3>(pti[v])) { //check if inside image 
+				std::cout << "NOT INSIDE " << std::endl;
+				return;
+			}
+		}
+		// compute the face center, which is also the view to face vector
+		// (cause the face is in camera view space)
+		//TO-DO still computes face center if not inside
+		Point3 faceCenterW((scene.mesh.vertices[face[0]] + scene.mesh.vertices[face[1]] + scene.mesh.vertices[face[2]]) / 3); //in world coord
+		std::cout << "faceCenterW: " << faceCenterW << std::endl;
+		//Point3 faceCenterC((ptc[0] + ptc[1] + ptc[2]) / 3); //in camera coord
+		//std::cout << "faceCenterC: " << faceCenterC << std::endl;
+		//Point3 faceCenterI((pti[0] + pti[1] + pti[2]) / 3); //in image coord
+		//std::cout << "faceCenterI: " << faceCenterI << std::endl;
+
+		Ray3 rayC2W = Ray3();
+		rayC2W.SetFromPoints(imageData.camera.C, faceCenterW);
+		IntersectRayMesh intRayC2W(octMesh, rayC2W, scene.mesh);
+		const MVS::Mesh::Face& faceC2W = scene.mesh.faces[(MVS::Mesh::FIndex)intRayC2W.pick.idx];
+		DEBUG("Face reprojected:\n\tindex: %u\n\tvertex 1: %u (%g %g %g)\n\tvertex 2: %u (%g %g %g)\n\tvertex 3: %u (%g %g %g)\n\tray origin: %u \n\tray dir: (%g %g %g)",
+			intRayC2W.pick.idx,
+			faceC2W[0], scene.mesh.vertices[faceC2W[0]].x, scene.mesh.vertices[faceC2W[0]].y, scene.mesh.vertices[faceC2W[0]].z,
+			faceC2W[1], scene.mesh.vertices[faceC2W[1]].x, scene.mesh.vertices[faceC2W[1]].y, scene.mesh.vertices[faceC2W[1]].z,
+			faceC2W[2], scene.mesh.vertices[faceC2W[2]].x, scene.mesh.vertices[faceC2W[2]].y, scene.mesh.vertices[faceC2W[2]].z,
+			rayC2W.m_pOrig,
+			rayC2W.m_vDir
+		);
+
+		if (intRayC2W.pick.idx == intRay.pick.idx) {
+			allCameras.push_back(idxImage);
+		}
+
+	}
+
+		return allCameras;
+}*/
 /*----------------------------------------------------------------*/

@@ -70,6 +70,8 @@ public:
 	static SEACAVE::EventQueue events; // internal events queue (processed by the working threads)
 	static SEACAVE::Thread thread; // worker thread
 
+	//struct IntersectRayMesh;
+
 public:
 	Scene();
 	~Scene();
@@ -93,6 +95,8 @@ public:
 	void Loop();
 
 	void CastRay(const Ray3&, int);
+	//std::vector<int> getAllCamerasSeeingFace(const MVS::Mesh::Face& face, IntersectRayMesh intRay);
+
 protected:
 	static void* ThreadWorker(void*);
 };

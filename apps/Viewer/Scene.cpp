@@ -533,7 +533,10 @@ void Scene::Draw()
 			const Point3d ic3(px, py, scaleFocal);
 			const Point3d ic4(px, cy, scaleFocal);
 			// draw image thumbnail
-			const bool bSelectedImage(idx == window.camera->currentCamID);
+			//debug
+			//std::cout<<"idx is:"<<idx<<std::endl;
+			//std::cout<<"current cam:"<<window.camera->currentCamID<<std::endl;
+			const bool bSelectedImage(idx == 0);//window.camera->currentCamID);
 			if (bSelectedImage) {
 				if (image.IsValid()) {
 					// render image
@@ -598,8 +601,45 @@ void Scene::Draw()
 
 	glfwMakeContextCurrent(window_i.GetWindow());
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	glUseProgram(GL_SHADER);
-	glDrawElements(GL_TRIANGLES,6,GL_UNSIGNED_INT,0);
+
+	if (window.bRenderCameras) {
+		FOREACH(idx, images) {
+			Image& image = images[idx];
+			const MVS::Image& imageData = scene.images[image.idx];
+			const MVS::Camera& camera = imageData.camera;
+		// draw image thumbnail
+			const bool bSelectedImage(idx == 0);//window.camera->currentCamID);
+			if (bSelectedImage) {
+				std::cout<<"got image!!!!!!!!!!!!!!!"<<std::endl;
+				if (image.IsValid()) {
+					std::cout<<"start rendering image!!!!!!!!"<<std::endl;
+					// render image
+					glEnable(GL_TEXTURE_2D);
+					image.Bind();
+					//glDisable(GL_DEPTH_TEST);
+					glBegin(GL_QUADS);
+					glTexCoord2d(0,0); glVertex2d(-1,-1);
+					glTexCoord2d(0,1); glVertex2d(-1,1);
+					glTexCoord2d(1,1); glVertex2d(1,1);
+					glTexCoord2d(1,0); glVertex2d(1,-1);
+					glEnd();
+					glDisable(GL_TEXTURE_2D);
+				} else {
+					// start and wait to load the image
+					if (image.IsImageEmpty()) {
+						// start loading
+						image.SetImageLoading();
+						events.AddEvent(new EVTLoadImage(this, idx, IMAGE_MAX_RESOLUTION));
+					} else {
+						// check if the image is available and set it
+						image.TransferImage();
+					}
+				}
+			}
+		}
+	}
+	//glUseProgram(GL_SHADER);
+	//glDrawElements(GL_TRIANGLES,6,GL_UNSIGNED_INT,0);
 	glfwSwapBuffers(window_i.GetWindow());
 	std::cout<<"enter here!!!!!!!"<<std::endl;
 }

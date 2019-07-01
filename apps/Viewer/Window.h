@@ -49,7 +49,6 @@ namespace VIEWER {
 class Window
 {
 public:
-	int num;
 	GLFWwindow* window; // window handle
 	CameraPtr camera; // current camera (always valid)
 	Eigen::Vector2d pos, prevPos; // current and previous mouse position (normalized)
@@ -129,7 +128,7 @@ protected:
 class Window_I: public Window
 {
 public:
-	int num_i;
+	bool UpdateImage(Image&);
 };
 } // namespace VIEWER
 

@@ -56,10 +56,9 @@ public:
 
 	String sceneName;
 	MVS::Scene scene;
-	Window window;
-	//debug
-	//add window_i
-	Window_I window_i;
+	Window window;	
+	Window_I window_i;//add window_i for image-pop-up window
+	int image_pop_id; //image id for pop-up
 	ImageArr images; // scene photos
 	ImageArr textures; // mesh textures
 

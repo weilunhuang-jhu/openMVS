@@ -168,7 +168,6 @@ void Window::Resize(GLFWwindow* window, int width, int height)
 void Window::Key(int k, int /*scancode*/, int action, int mod)
 {
 	switch (k) {
-	case GLFW_KEY_ESCAPE:
 		if (action == GLFW_RELEASE)
 			glfwSetWindowShouldClose(window, 1);
 		break;
@@ -354,3 +353,22 @@ bool Window::IsAltKeyPressed() const
 		glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
 }
 /*----------------------------------------------------------------*/
+bool Window_I::UpdateImage(Image& image)
+{
+	if (image.IsValid()) {
+		//std::cout<<"start rendering image!!!!!!!!"<<std::endl;
+		// render image
+		glEnable(GL_TEXTURE_2D);
+		image.Bind();
+		//std::cout<<"texture:"<<image.texture<<std::endl;
+		glBegin(GL_QUADS);
+		glTexCoord2d(0,0); glVertex2d(1,1);
+		glTexCoord2d(0,1); glVertex2d(1,-1);
+		glTexCoord2d(1,1); glVertex2d(-1,-1);
+		glTexCoord2d(1,0); glVertex2d(-1,1);
+		glEnd();
+		glDisable(GL_TEXTURE_2D);
+		return true;
+	}
+	else return false;
+}

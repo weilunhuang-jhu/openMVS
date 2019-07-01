@@ -264,18 +264,21 @@ bool Scene::Init(int width, int height, LPCTSTR windowName, LPCTSTR fileName, LP
 {
 	ASSERT(scene.IsEmpty());
 
-	// init window
+	//init image_pop_id
+	image_pop_id=-1;
+	
+	// init glfw lib
 	if (glfwInit() == GL_FALSE)
 		return false;
 
-	//debug: add init window_i
-	if (!window_i.Init(600, 600, "Imager"))
+	//init window_i
+	if (!window_i.Init(width, height, "Imager"))
 		{std::cout<<"cannot init window_i"<<std::endl;
 			return false;}
-	window_i.num=1;
+	
+	//init window
 	if (!window.Init(width, height, windowName))
 		return false;
-	window.num=0;
 	
 	if (glewInit() != GLEW_OK)
 		return false;
@@ -285,13 +288,6 @@ bool Scene::Init(int width, int height, LPCTSTR windowName, LPCTSTR fileName, LP
 	window.clbkRayScene = DELEGATEBINDCLASS(Window::ClbkRayScene, &Scene::CastRay, this);
 	window.clbkCompilePointCloud = DELEGATEBINDCLASS(Window::ClbkCompilePointCloud, &Scene::CompilePointCloud, this);
 	window.clbkCompileMesh = DELEGATEBINDCLASS(Window::ClbkCompileMesh, &Scene::CompileMesh, this);
-
-
-	//window_i.clbkOpenScene = DELEGATEBINDCLASS(Window::ClbkOpenScene, &Scene::Open, this);
-	//window_i.clbkExportScene = DELEGATEBINDCLASS(Window::ClbkExportScene, &Scene::Export, this);
-	//window_i.clbkRayScene = DELEGATEBINDCLASS(Window::ClbkRayScene, &Scene::CastRay, this);
-	//window_i.clbkCompilePointCloud = DELEGATEBINDCLASS(Window::ClbkCompilePointCloud, &Scene::CompilePointCloud, this);
-	//window_i.clbkCompileMesh = DELEGATEBINDCLASS(Window::ClbkCompileMesh, &Scene::CompileMesh, this);
 
 	// init OpenGL
 	glPolygonMode(GL_FRONT, GL_FILL);
@@ -318,7 +314,6 @@ bool Scene::Init(int width, int height, LPCTSTR windowName, LPCTSTR fileName, LP
 	// open scene or init empty scene
 	if (fileName == NULL || !Open(fileName, meshFileName))
 		window.SetCamera(CameraPtr(new Camera()));
-
 	window.SetVisible(true);
 	window_i.SetVisible(true);
 	return true;
@@ -477,6 +472,7 @@ void Scene::CompileMesh()
 
 void Scene::Draw()
 {
+	//render for window
 	glfwMakeContextCurrent(window.GetWindow());
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glPointSize(window.pointSize);
@@ -533,10 +529,7 @@ void Scene::Draw()
 			const Point3d ic3(px, py, scaleFocal);
 			const Point3d ic4(px, cy, scaleFocal);
 			// draw image thumbnail
-			//debug
-			//std::cout<<"idx is:"<<idx<<std::endl;
-			//std::cout<<"current cam:"<<window.camera->currentCamID<<std::endl;
-			const bool bSelectedImage(idx == 0);//window.camera->currentCamID);
+			const bool bSelectedImage(idx == window.camera->currentCamID);
 			if (bSelectedImage) {
 				if (image.IsValid()) {
 					// render image
@@ -597,46 +590,28 @@ void Scene::Draw()
 		glPointSize(window.pointSize);
 	}
 	glfwSwapBuffers(window.GetWindow());
-//window_i
 
+	//render for window_i
 	glfwMakeContextCurrent(window_i.GetWindow());
-	//glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	if (window.bRenderCameras) {
-		FOREACH(idx, images) {
-			Image& image = images[idx];
-			//const MVS::Image& imageData = scene.images[image.idx];
-			// draw image thumbnail
-			const bool bSelectedImage(idx == 0);//window.camera->currentCamID);
-			if (bSelectedImage) {
-				std::cout<<"got image!!!!!!!!!!!!!!!"<<std::endl;
-				if (image.IsValid()) {
-					std::cout<<"start rendering image!!!!!!!!"<<std::endl;
-					// render image
-					glEnable(GL_TEXTURE_2D);
-					image.Bind();
-					std::cout<<"texture:"<<image.texture<<std::endl;
-					//glColor3f(1,0,0);	
-					glBegin(GL_QUADS);
-					glTexCoord2d(0,0); glVertex2d(-1,-1);
-					glTexCoord2d(0,1); glVertex2d(-1,1);
-					glTexCoord2d(1,1); glVertex2d(1,1);
-					glTexCoord2d(1,0); glVertex2d(1,-1);
-					glEnd();
-					//glDisable(GL_TEXTURE_2D);
+	if (window.bRenderCameras && image_pop_id>0) {
+		Image& image = images[image_pop_id];
+		//to do: change window size according to image size
+		//double ratio=(double)image.width/(double)image.height;
+		//glfwSetWindowSize(window_i.window,image.width,image.height);
+		if (!window_i.UpdateImage(image))
+			{
+				// start and wait to load the image
+				if (image.IsImageEmpty()) {
+					// start loading
+					image.SetImageLoading();
+					events.AddEvent(new EVTLoadImage(this, image_pop_id, IMAGE_MAX_RESOLUTION));
 				} else {
-					// start and wait to load the image
-					if (image.IsImageEmpty()) {
-						// start loading
-						image.SetImageLoading();
-						events.AddEvent(new EVTLoadImage(this, idx, IMAGE_MAX_RESOLUTION));
-					} else {
-						// check if the image is available and set it
-						image.TransferImage();
-					}
+					// check if the image is available and set it
+					image.TransferImage();
 				}
 			}
-		}
 	}
 	glfwSwapBuffers(window_i.GetWindow());
 }
@@ -762,8 +737,9 @@ void Scene::CastRay(const Ray3& ray, int action)
 			}
 
 			//debug
-			std::cout<<"dist from mouse to face:"<<intRay.pick.dist<<std::endl;
-
+			//std::cout<<"dist from mouse to face:"<<intRay.pick.dist<<std::endl;
+			image_pop_id=allCameras.size()/2;
+			std::cout<<"pop up image:"<<image_pop_id<<std::endl;
 			/*
 			//Print out the camera id that directly sees the selected face
 			std::vector<int> allCamerasForFace = this->getAllCamerasSeeingFace(face, intRay);

@@ -267,8 +267,16 @@ bool Scene::Init(int width, int height, LPCTSTR windowName, LPCTSTR fileName, LP
 	// init window
 	if (glfwInit() == GL_FALSE)
 		return false;
+
+	//debug: add init window_i
+	if (!window_i.Init(600, 600, "Imager"))
+		{std::cout<<"cannot init window_i"<<std::endl;
+			return false;}
+	window_i.num=1;
 	if (!window.Init(width, height, windowName))
 		return false;
+	window.num=0;
+	
 	if (glewInit() != GLEW_OK)
 		return false;
 	name = windowName;
@@ -277,6 +285,13 @@ bool Scene::Init(int width, int height, LPCTSTR windowName, LPCTSTR fileName, LP
 	window.clbkRayScene = DELEGATEBINDCLASS(Window::ClbkRayScene, &Scene::CastRay, this);
 	window.clbkCompilePointCloud = DELEGATEBINDCLASS(Window::ClbkCompilePointCloud, &Scene::CompilePointCloud, this);
 	window.clbkCompileMesh = DELEGATEBINDCLASS(Window::ClbkCompileMesh, &Scene::CompileMesh, this);
+
+
+	//window_i.clbkOpenScene = DELEGATEBINDCLASS(Window::ClbkOpenScene, &Scene::Open, this);
+	//window_i.clbkExportScene = DELEGATEBINDCLASS(Window::ClbkExportScene, &Scene::Export, this);
+	//window_i.clbkRayScene = DELEGATEBINDCLASS(Window::ClbkRayScene, &Scene::CastRay, this);
+	//window_i.clbkCompilePointCloud = DELEGATEBINDCLASS(Window::ClbkCompilePointCloud, &Scene::CompilePointCloud, this);
+	//window_i.clbkCompileMesh = DELEGATEBINDCLASS(Window::ClbkCompileMesh, &Scene::CompileMesh, this);
 
 	// init OpenGL
 	glPolygonMode(GL_FRONT, GL_FILL);
@@ -305,6 +320,7 @@ bool Scene::Init(int width, int height, LPCTSTR windowName, LPCTSTR fileName, LP
 		window.SetCamera(CameraPtr(new Camera()));
 
 	window.SetVisible(true);
+	window_i.SetVisible(true);
 	return true;
 }
 bool Scene::Open(LPCTSTR fileName, LPCTSTR meshFileName)
@@ -461,6 +477,7 @@ void Scene::CompileMesh()
 
 void Scene::Draw()
 {
+	glfwMakeContextCurrent(window.GetWindow());
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glPointSize(window.pointSize);
 
@@ -577,19 +594,30 @@ void Scene::Draw()
 		glPointSize(window.pointSize);
 	}
 	glfwSwapBuffers(window.GetWindow());
+//window_i
+
+	glfwMakeContextCurrent(window_i.GetWindow());
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glUseProgram(GL_SHADER);
+	glDrawElements(GL_TRIANGLES,6,GL_UNSIGNED_INT,0);
+	glfwSwapBuffers(window_i.GetWindow());
+	std::cout<<"enter here!!!!!!!"<<std::endl;
 }
 
 void Scene::ProcessEvents()
 {
+	//window
+	glfwMakeContextCurrent(window.window);
 	glfwWaitEvents();
 	window.UpdateMousePosition();
 	if (glfwGetMouseButton(window.GetWindow(), GLFW_MOUSE_BUTTON_1) != GLFW_RELEASE)
 		window.camera->Rotate(window.pos, window.prevPos);
+
 }
 
 void Scene::Loop()
 {
-	while (!glfwWindowShouldClose(window.GetWindow())) {
+	while (!glfwWindowShouldClose(window.GetWindow())||!glfwWindowShouldClose(window_i.GetWindow())) {
 		ProcessEvents();
 		Draw();
 	}
@@ -641,7 +669,7 @@ void Scene::CastRay(const Ray3& ray, int action)
 			Point3 ptc[3];//point to camera coord
 			Point2f pti[3];//point to image coord
 			std::vector<int> allCameras;
-
+			std::vector<REAL> my_dist;
 			FOREACH(idxImage, scene.images) {
 				const MVS::Image& imageData = scene.images[idxImage];
 				std::cout << "idxImage " << idxImage << std::endl;
@@ -673,6 +701,8 @@ void Scene::CastRay(const Ray3& ray, int action)
 				rayr.SetFromPoints(imageData.camera.C, faceCenterW);
 				IntersectRayMesh intRayr(octMesh, rayr, scene.mesh);
 				const MVS::Mesh::Face& faceR = scene.mesh.faces[(MVS::Mesh::FIndex)intRayr.pick.idx];
+				REAL dist_cam_to_face;
+				dist_cam_to_face=imageData.camera.Distance(faceCenterW);
 				DEBUG("Face reprojected:\n\tindex: %u\n\tvertex 1: %u (%g %g %g)\n\tvertex 2: %u (%g %g %g)\n\tvertex 3: %u (%g %g %g)\n\tray origin: %u \n\tray dir: (%g %g %g)",
 					intRayr.pick.idx,
 					faceR[0], scene.mesh.vertices[faceR[0]].x, scene.mesh.vertices[faceR[0]].y, scene.mesh.vertices[faceR[0]].z,
@@ -684,16 +714,18 @@ void Scene::CastRay(const Ray3& ray, int action)
 
 				if (intRayr.pick.idx == intRay.pick.idx) {
 					allCameras.push_back(idxImage);
+					my_dist.push_back(dist_cam_to_face);
 				}
 			}
 
 
 			for (int i = 0; i < allCameras.size(); i++) {
 				std::cout << "IMAGE: " << allCameras.at(i) << std::endl;
-
+				std::cout<<"dist:"<<my_dist[i]<<std::endl;
 			}
 
-
+			//debug
+			std::cout<<"dist from mouse to face:"<<intRay.pick.dist<<std::endl;
 
 			/*
 			//Print out the camera id that directly sees the selected face

@@ -57,6 +57,9 @@ public:
 	String sceneName;
 	MVS::Scene scene;
 	Window window;
+	//debug
+	//add window_i
+	Window_I window_i;
 	ImageArr images; // scene photos
 	ImageArr textures; // mesh textures
 

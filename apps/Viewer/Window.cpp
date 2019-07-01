@@ -71,6 +71,8 @@ bool Window::Init(int width, int height, LPCTSTR name)
 {
 	glfwDefaultWindowHints();
 	glfwWindowHint(GLFW_VISIBLE, 0);
+	//debug
+	std::cout<<"w:"<<width<<" h:"<<height<<" name:"<<name<<std::endl;
 	window = glfwCreateWindow(width, height, name, NULL, NULL);
 	if (!window)
 		return false;

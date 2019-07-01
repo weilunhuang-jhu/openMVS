@@ -600,14 +600,13 @@ void Scene::Draw()
 //window_i
 
 	glfwMakeContextCurrent(window_i.GetWindow());
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	//glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	if (window.bRenderCameras) {
 		FOREACH(idx, images) {
 			Image& image = images[idx];
-			const MVS::Image& imageData = scene.images[image.idx];
-			const MVS::Camera& camera = imageData.camera;
-		// draw image thumbnail
+			//const MVS::Image& imageData = scene.images[image.idx];
+			// draw image thumbnail
 			const bool bSelectedImage(idx == 0);//window.camera->currentCamID);
 			if (bSelectedImage) {
 				std::cout<<"got image!!!!!!!!!!!!!!!"<<std::endl;
@@ -616,14 +615,15 @@ void Scene::Draw()
 					// render image
 					glEnable(GL_TEXTURE_2D);
 					image.Bind();
-					//glDisable(GL_DEPTH_TEST);
+					std::cout<<"texture:"<<image.texture<<std::endl;
+					//glColor3f(1,0,0);	
 					glBegin(GL_QUADS);
 					glTexCoord2d(0,0); glVertex2d(-1,-1);
 					glTexCoord2d(0,1); glVertex2d(-1,1);
 					glTexCoord2d(1,1); glVertex2d(1,1);
 					glTexCoord2d(1,0); glVertex2d(1,-1);
 					glEnd();
-					glDisable(GL_TEXTURE_2D);
+					//glDisable(GL_TEXTURE_2D);
 				} else {
 					// start and wait to load the image
 					if (image.IsImageEmpty()) {
@@ -638,10 +638,7 @@ void Scene::Draw()
 			}
 		}
 	}
-	//glUseProgram(GL_SHADER);
-	//glDrawElements(GL_TRIANGLES,6,GL_UNSIGNED_INT,0);
 	glfwSwapBuffers(window_i.GetWindow());
-	std::cout<<"enter here!!!!!!!"<<std::endl;
 }
 
 void Scene::ProcessEvents()

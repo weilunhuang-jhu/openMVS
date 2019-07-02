@@ -738,7 +738,7 @@ void Scene::CastRay(const Ray3& ray, int action)
 
 			//debug
 			//std::cout<<"dist from mouse to face:"<<intRay.pick.dist<<std::endl;
-			image_pop_id=allCameras.size()/2;
+			image_pop_id=allCameras.at(allCameras.size()/2);
 			std::cout<<"pop up image:"<<image_pop_id<<std::endl;
 			/*
 			//Print out the camera id that directly sees the selected face

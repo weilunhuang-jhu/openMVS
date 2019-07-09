@@ -681,7 +681,8 @@ void Scene::CastRay(const Ray3& ray, int action)
 			Point3 ptc[3];//point to camera coord
 			Point2f pti[3];//point to image coord
 			std::vector<int> allCameras;
-			std::vector<REAL> my_dist;
+			std::vector<REAL> my_dist;//
+			std::vector<Point2f*> img_coords;//store image coordinate for the face in every img
 			FOREACH(idxImage, scene.images) {
 				const MVS::Image& imageData = scene.images[idxImage];
 				std::cout << "idxImage " << idxImage << std::endl;
@@ -727,6 +728,9 @@ void Scene::CastRay(const Ray3& ray, int action)
 				if (intRayr.pick.idx == intRay.pick.idx) {
 					allCameras.push_back(idxImage);
 					my_dist.push_back(dist_cam_to_face);
+					//round pti
+					for(int i=0;i<3;i++) for(int j=0;j<3;j++) pti[i][j]=round(pti[i][j]);
+					img_coords.push_back(pti);
 				}
 			}
 
@@ -734,6 +738,7 @@ void Scene::CastRay(const Ray3& ray, int action)
 			for (int i = 0; i < allCameras.size(); i++) {
 				std::cout << "IMAGE: " << allCameras.at(i) << std::endl;
 				std::cout<<"dist:"<<my_dist[i]<<std::endl;
+				for(int j=0;j<3;j++) std::cout<<"img coordinate "<<j<<":"<<img_coords[i][j]<<std::endl;
 			}
 
 			//debug
